@@ -1,0 +1,23 @@
+{
+  "language": "hi-IN",
+  "video": {
+    "target_duration_seconds": 150,
+    "min_duration_seconds": 120,
+    "max_duration_seconds": 180,
+    "width": 1080,
+    "height": 1920,
+    "fps": 30
+  },
+  "publishing": {
+    "youtube_enabled": false,
+    "facebook_enabled": false
+  },
+  "astrology": {
+    "zodiac_system": "sidereal",
+    "ayanamsa": "Lahiri",
+    "rashi_names_hi": [
+      "मेष", "वृषभ", "मिथुन", "कर्क", "सिंह", "कन्या",
+      "तुला", "वृश्चिक", "धनु", "मकर", "कुंभ", "मीन"
+    ]
+  }
+}
