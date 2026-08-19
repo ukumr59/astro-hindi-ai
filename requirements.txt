@@ -1,2 +1,4 @@
-pydantic>=2,<3
+skyfield==1.54
+jplephem>=2.22
+numpy>=2
 python-dateutil>=2,<3
