@@ -694,45 +694,68 @@ def _make_shani(path):
 # REAL DEITY ARTWORK SOURCES
 # ============================================================
 
-# Actual recognizable devotional sculptures/paintings. No generated
-# geometric/cartoon deity drawings are used.
+# IMPORTANT:
+# Do NOT use the old LACMA image URLs here. Those endpoints returned 404s.
+# We use The Metropolitan Museum of Art Open Access API for six deities.
+# The Met explicitly provides public-domain images through its Open Access API.
+# Shani uses the direct upload.wikimedia.org file URL, avoiding the Commons
+# API/search endpoint that previously returned HTTP 429 in GitHub Actions.
+
+MET_API = "https://collectionapi.metmuseum.org/public/collection/v1/objects/{}"
+
 DEITY_SOURCES = {
     "हनुमान जी": {
-        "url": "https://collections.lacma.org/sites/default/files/remote_images/piction/ma-31974974-O3.jpg",
-        "title": "Hanuman, The Divine Monkey — LACMA M.91.181",
-        "credit": "Los Angeles County Museum of Art — public-domain image",
+        "met_id": 37960,
+        "title": "Hanuman Bearing the Mountaintop with Medicinal Herbs — The Metropolitan Museum of Art, 57.70.6",
+        "credit": "The Metropolitan Museum of Art Open Access — Public Domain",
     },
     "महालक्ष्मी जी": {
-        "url": "https://collections.lacma.org/sites/default/files/remote_images/piction/ma-2794266-O3.jpg",
-        "title": "The Hindu Goddess Shri Lakshmi — LACMA M.87.210",
-        "credit": "Los Angeles County Museum of Art — public-domain image",
+        "met_id": 78264,
+        "title": "Lakshmi — The Metropolitan Museum of Art, 2013.10",
+        "credit": "The Metropolitan Museum of Art Open Access — Public Domain",
     },
     "श्री गणेश जी": {
-        "url": "https://collections.lacma.org/sites/default/files/remote_images/piction/ma-31961122-O3.jpg",
-        "title": "Ganesha, Lord of Obstacles — LACMA AC1993.239.8",
-        "credit": "Los Angeles County Museum of Art — public-domain image",
+        "met_id": 37397,
+        "title": "Ganesha — The Metropolitan Museum of Art, 2015.500.4.12",
+        "credit": "The Metropolitan Museum of Art Open Access — Public Domain",
     },
     "भगवान शिव": {
-        "url": "https://collections.lacma.org/sites/default/files/remote_images/piction/ma-34004515-O3.jpg",
-        "title": "The Hindu God Shiva — LACMA M.79.189.1",
-        "credit": "Los Angeles County Museum of Art — public-domain image",
+        "met_id": 39328,
+        "title": "Shiva as Lord of Dance (Nataraja) — The Metropolitan Museum of Art",
+        "credit": "The Metropolitan Museum of Art Open Access — Public Domain",
     },
     "सूर्य देव": {
-        "url": "https://collections.lacma.org/sites/default/files/remote_images/piction/ma-34367936-O3.jpg",
-        "title": "Surya, The Sun God — LACMA M.86.94.1",
-        "credit": "Los Angeles County Museum of Art — public-domain image",
+        "met_id": 39248,
+        "title": "Standing Surya — The Metropolitan Museum of Art, 2000.284.1",
+        "credit": "The Metropolitan Museum of Art Open Access — Public Domain",
     },
     "भगवान विष्णु": {
-        "url": "https://collections.lacma.org/sites/default/files/remote_images/piction/ma-31955746-O3.jpg",
-        "title": "The Hindu God Vishnu — LACMA AC1999.263.1",
-        "credit": "Los Angeles County Museum of Art — public-domain image",
+        "met_id": 38723,
+        "title": "Vishnu — The Metropolitan Museum of Art, 20.52.1",
+        "credit": "The Metropolitan Museum of Art Open Access — Public Domain",
     },
     "शनि देव": {
-        "url": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Shani_Deva.jpg",
+        "url": "https://upload.wikimedia.org/wikipedia/commons/9/9b/Shani_Deva.jpg",
         "title": "Shani Deva — Raja Ravi Varma artwork",
-        "credit": "Wikimedia Commons — public-domain artwork",
+        "credit": "Wikimedia Commons — Public Domain artwork",
     },
 }
+
+
+def met_object_image(met_id):
+    """Resolve a stable public-domain image through The Met Open Access API."""
+    api_url = MET_API.format(met_id)
+    raw = request_bytes(api_url, timeout=60)
+    data = json.loads(raw.decode("utf-8"))
+
+    if not data.get("isPublicDomain"):
+        raise RuntimeError(f"Met object {met_id} is not marked public domain.")
+
+    image_url = data.get("primaryImage") or data.get("primaryImageSmall")
+    if not image_url:
+        raise RuntimeError(f"Met object {met_id} has no downloadable primary image.")
+
+    return image_url
 
 
 def download_deity(item_index, deity, query):
@@ -742,14 +765,23 @@ def download_deity(item_index, deity, query):
     if source is None:
         raise RuntimeError(f"No real deity artwork source exists for {deity}.")
 
+    # Resolve the actual image URL once. This avoids hard-coded museum image
+    # paths that can become stale while keeping the source authoritative.
+    if "met_id" in source:
+        image_url = met_object_image(source["met_id"])
+    else:
+        image_url = source["url"]
+
+    print(f"Downloading real deity artwork: {deity}")
+    print(f"Artwork source: {image_url}")
+
+    last_error = None
     if not destination.exists() or destination.stat().st_size < 10000:
-        print(f"Downloading real deity artwork: {deity}")
-        last_error = None
-        for attempt, wait_seconds in enumerate((0, 8, 20, 45), start=1):
+        for attempt, wait_seconds in enumerate((0, 5, 15), start=1):
             if wait_seconds:
                 time.sleep(wait_seconds)
             try:
-                data = request_bytes(source["url"], timeout=90)
+                data = request_bytes(image_url, timeout=90)
                 if not data or len(data) < 10000:
                     raise RuntimeError("Downloaded response is too small to be an image.")
                 destination.write_bytes(data)
@@ -774,7 +806,7 @@ def download_deity(item_index, deity, query):
             f"Downloaded deity artwork for {deity} is not a valid image: {exc}"
         )
 
-    return destination, source["title"], source["url"], source["credit"]
+    return destination, source["title"], image_url, source["credit"]
 
 
 def prepare_deities():
@@ -784,7 +816,7 @@ def prepare_deities():
         "REAL DEITY ARTWORK CREDITS",
         "===========================",
         "",
-        "Recognizable real devotional artwork is used; no generated geometric/cartoon deity drawings are used.",
+        "Recognizable public-domain devotional artwork is used; no generated geometric/cartoon deity drawings are used.",
         "",
     ]
 
