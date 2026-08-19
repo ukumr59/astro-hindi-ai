@@ -1219,16 +1219,17 @@ def make_animated_clip(
     index,
 ):
     """
-    Converts one static poster into an animated clip.
+    Convert one static devotional/Rashi poster into an animated clip.
 
-    Animation:
-    - slow zoom
-    - slow horizontal drift
-    - gentle brightness breathing
+    This implementation deliberately avoids FFmpeg expression functions
+    such as sin(), cos() and eq=brightness.  GitHub's FFmpeg build has been
+    rejecting those expressions in the filter graph.  The animation is
+    therefore produced using only zoompan's simple frame counter:
 
-    IMPORTANT:
-    The brightness expression intentionally uses `t`, not `on`.
-    `on` belongs to zoompan; `t` belongs to the eq filter.
+      - continuous slow zoom from 1.00x to about 1.12x
+      - centered crop follows the zoom automatically
+
+    The scene-to-scene transition is handled separately by xfade.
     """
 
     output = SCENES / f"clip_{index:02d}.mp4"
@@ -1238,22 +1239,20 @@ def make_animated_clip(
         int(round(duration * FPS)),
     )
 
-    zoom_expr = (
-        "min(max(zoom,pzoom)+0.00020,1.14)"
-    )
+    # Simple arithmetic only. No sin/cos/eq expressions.
+    # At the end of a typical ~50 s clip this reaches about 1.12x.
+    zoom_expr = "1+0.00008*on"
+    x_expr = "(iw-iw/zoom)/2"
+    y_expr = "(ih-ih/zoom)/2"
 
-    # No embedded quotes: this is passed directly to subprocess,
-    # not through a shell.
     filtergraph = (
-        f"zoompan="
+        "zoompan="
         f"z={zoom_expr}:"
-        f"x='iw/2-(iw/zoom/2)+18*sin(on/180)':"
-        f"y='ih/2-(ih/zoom/2)+12*cos(on/220)':"
+        f"x={x_expr}:"
+        f"y={y_expr}:"
         f"d={frames}:"
         f"s={WIDTH}x{HEIGHT}:"
-        f"fps={FPS},"
-        f"eq=brightness=0.012*sin(2*PI*t/18):"
-        f"contrast=1.025:saturation=1.06"
+        f"fps={FPS}"
     )
 
     run(
@@ -1281,6 +1280,11 @@ def make_animated_clip(
         ],
         timeout=900,
     )
+
+    if not output.exists():
+        raise RuntimeError(
+            f"Animated clip was not created: {output}"
+        )
 
     return output
 
