@@ -26,17 +26,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Check available video tools
-        run: |
-          echo "Checking installed tools..."
-
-          which ffmpeg || true
-          which ffprobe || true
-          which espeak-ng || true
-
-          ffmpeg -version | head -1 || true
-          espeak-ng --version || true
-
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
@@ -58,7 +47,7 @@ jobs:
 
           test -f output/daily_script.md
           test -f output/planetary_report.txt
-          test -f output/daily_voice.wav
+          test -f output/daily_voice.mp3
           test -f output/daily_video.mp4
 
       - name: Upload generated files
@@ -68,6 +57,7 @@ jobs:
           path: |
             output/daily_script.md
             output/planetary_report.txt
-            output/daily_voice.wav
+            output/daily_voice.mp3
             output/daily_video.mp4
+            output/video_poster.png
           retention-days: 7
