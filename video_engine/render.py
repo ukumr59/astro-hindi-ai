@@ -329,76 +329,330 @@ def commons_search(search_text):
     return (preferred or candidates)[0]
 
 
+
+def _draw_centered(draw, text, font, y, fill):
+    box = draw.textbbox((0, 0), text, font=font)
+    x = (1000 - (box[2] - box[0])) / 2
+    draw.text((x, y), text, font=font, fill=fill)
+
+
+def _halo(draw, cx, cy, radius):
+    for r in range(radius, 40, -12):
+        alpha = int(18 + 90 * (radius - r) / max(1, radius - 40))
+        fill = (255, 205, 60, alpha)
+        draw.ellipse(
+            (cx-r, cy-r, cx+r, cy+r),
+            outline=fill,
+            width=8,
+        )
+
+
+def _deity_canvas():
+    return Image.new("RGBA", (1000, 1000), (8, 3, 28, 255))
+
+
+def _save_deity(img, path):
+    # Add a soft vignette so the deity remains visually dominant
+    # after the scene is animated.
+    vignette = Image.new("L", (1000, 1000), 0)
+    vd = ImageDraw.Draw(vignette)
+    vd.ellipse((60, 40, 940, 960), fill=235)
+    vignette = vignette.filter(ImageFilter.GaussianBlur(55))
+
+    dark = Image.new("RGBA", (1000, 1000), (0, 0, 0, 0))
+    dark.putalpha(Image.eval(vignette, lambda p: 235 - p))
+    img = Image.alpha_composite(img, dark)
+
+    img.convert("RGB").save(path, "JPEG", quality=96)
+
+
+def _make_hanuman(path):
+    img = _deity_canvas()
+    d = ImageDraw.Draw(img)
+    gold = (255, 213, 75, 255)
+    red = (178, 35, 35, 255)
+    skin = (155, 82, 48, 255)
+    dark = (45, 18, 18, 255)
+    white = (255, 245, 220, 255)
+
+    _halo(d, 500, 390, 350)
+
+    # Crown
+    d.polygon([(410,245),(445,115),(500,205),(555,115),(590,245)], fill=gold)
+    d.ellipse((420,210,580,300), fill=gold, outline=white, width=4)
+
+    # Ears / head / face
+    d.ellipse((350,280,650,570), fill=skin, outline=gold, width=7)
+    d.ellipse((300,330,390,460), fill=skin, outline=gold, width=6)
+    d.ellipse((610,330,700,460), fill=skin, outline=gold, width=6)
+    d.ellipse((415,365,450,405), fill=dark)
+    d.ellipse((550,365,585,405), fill=dark)
+    d.polygon([(475,425),(525,425),(500,475)], fill=(105,45,30,255))
+    d.arc((430,445,570,525), 10, 170, fill=white, width=8)
+
+    # Tilak
+    d.line((500,310,500,385), fill=white, width=9)
+
+    # Body
+    d.ellipse((310,520,690,880), fill=red, outline=gold, width=7)
+    d.ellipse((225,555,385,700), fill=skin, outline=gold, width=6)
+    d.ellipse((615,555,775,700), fill=skin, outline=gold, width=6)
+
+    # Mace
+    d.line((770,350,790,820), fill=gold, width=28)
+    d.ellipse((700,250,875,430), fill=gold, outline=white, width=7)
+
+    # Tail
+    d.arc((150,640,420,930), 260, 70, fill=skin, width=24)
+
+    _draw_centered(d, "हनुमान जी", get_font(62), 900, gold)
+    _save_deity(img, path)
+
+
+def _make_ganesha(path):
+    img = _deity_canvas()
+    d = ImageDraw.Draw(img)
+    gold = (255, 211, 72, 255)
+    skin = (218, 142, 105, 255)
+    red = (180, 42, 45, 255)
+    dark = (48, 18, 25, 255)
+    white = (255, 245, 220, 255)
+
+    _halo(d, 500, 390, 350)
+
+    # Crown
+    d.polygon([(385,255),(430,105),(500,200),(570,105),(615,255)], fill=gold)
+    d.ellipse((390,225,610,310), fill=gold, outline=white, width=4)
+
+    # Elephant head and ears
+    d.ellipse((335,270,665,610), fill=skin, outline=gold, width=7)
+    d.ellipse((215,320,395,555), fill=skin, outline=gold, width=6)
+    d.ellipse((605,320,785,555), fill=skin, outline=gold, width=6)
+
+    d.ellipse((405,385,445,425), fill=dark)
+    d.ellipse((555,385,595,425), fill=dark)
+
+    # Trunk
+    d.rounded_rectangle((460,430,540,690), radius=35, fill=skin, outline=gold, width=5)
+    d.arc((475,575,590,720), 90, 270, fill=skin, width=38)
+
+    # Body and four arms
+    d.ellipse((330,585,670,900), fill=red, outline=gold, width=7)
+    for x1, y1, x2, y2 in [
+        (350,620,220,520),(650,620,780,520),
+        (360,720,230,820),(640,720,770,820)
+    ]:
+        d.line((x1,y1,x2,y2), fill=skin, width=38)
+
+    # Modak
+    d.ellipse((735,800,815,875), fill=gold)
+    _draw_centered(d, "श्री गणेश जी", get_font(58), 900, gold)
+    _save_deity(img, path)
+
+
+def _make_shiva(path):
+    img = _deity_canvas()
+    d = ImageDraw.Draw(img)
+    gold = (255, 211, 72, 255)
+    skin = (168, 190, 205, 255)
+    blue = (55, 115, 175, 255)
+    dark = (25, 30, 45, 255)
+    white = (245, 250, 255, 255)
+
+    _halo(d, 500, 400, 350)
+
+    # Hair / top knot
+    d.ellipse((350,180,650,580), fill=skin, outline=gold, width=7)
+    d.polygon([(360,250),(420,100),(500,205),(580,100),(640,250)], fill=dark)
+    d.arc((350,90,650,390), 180, 360, fill=gold, width=16)
+
+    # Third eye
+    d.ellipse((485,310,515,360), fill=blue)
+    d.ellipse((420,385,465,425), fill=dark)
+    d.ellipse((535,385,580,425), fill=dark)
+    d.arc((435,420,565,520), 10, 170, fill=white, width=8)
+
+    # Blue throat
+    d.ellipse((420,465,580,650), fill=blue, outline=gold, width=6)
+
+    # Body
+    d.ellipse((320,570,680,900), fill=white, outline=gold, width=7)
+
+    # Trident
+    d.line((760,200,760,850), fill=gold, width=18)
+    d.line((760,210,690,320), fill=gold, width=14)
+    d.line((760,210,830,320), fill=gold, width=14)
+    d.line((760,210,760,330), fill=gold, width=14)
+
+    # Crescent
+    d.arc((400,155,600,335), 205, 335, fill=white, width=14)
+
+    _draw_centered(d, "भगवान शिव", get_font(62), 900, gold)
+    _save_deity(img, path)
+
+
+def _make_lakshmi(path):
+    img = _deity_canvas()
+    d = ImageDraw.Draw(img)
+    gold = (255, 215, 75, 255)
+    skin = (235, 172, 145, 255)
+    pink = (215, 70, 120, 255)
+    red = (175, 45, 60, 255)
+    white = (255, 245, 225, 255)
+
+    _halo(d, 500, 380, 350)
+
+    # Lotus seat
+    for cx, cy, rx, ry in [
+        (390,760,120,80),(455,730,110,85),(545,730,110,85),(610,760,120,80)
+    ]:
+        d.ellipse((cx-rx,cy-ry,cx+rx,cy+ry), fill=pink, outline=gold, width=4)
+
+    # Body / sari
+    d.polygon([(380,430),(620,430),(720,870),(280,870)], fill=red, outline=gold)
+    d.ellipse((400,235,600,470), fill=skin, outline=gold, width=7)
+
+    # Crown
+    d.polygon([(405,260),(450,115),(500,205),(550,115),(595,260)], fill=gold)
+    d.ellipse((410,225,590,290), fill=gold)
+
+    # Face
+    d.ellipse((430,325,462,360), fill=(45,25,30,255))
+    d.ellipse((538,325,570,360), fill=(45,25,30,255))
+    d.arc((445,350,555,420), 5, 175, fill=white, width=7)
+
+    # Four arms
+    for x1,y1,x2,y2 in [(420,490,245,370),(580,490,755,370),(400,590,220,670),(600,590,780,670)]:
+        d.line((x1,y1,x2,y2), fill=skin, width=34)
+
+    # Lotus in hands
+    for cx,cy in [(235,350),(765,350),(210,660),(790,660)]:
+        d.ellipse((cx-35,cy-55,cx+35,cy+55), fill=pink, outline=gold, width=3)
+
+    _draw_centered(d, "महालक्ष्मी जी", get_font(58), 900, gold)
+    _save_deity(img, path)
+
+
+def _make_vishnu(path):
+    img = _deity_canvas()
+    d = ImageDraw.Draw(img)
+    gold = (255, 213, 75, 255)
+    skin = (95,145,205,255)
+    yellow = (232,185,55,255)
+    dark = (30,40,70,255)
+    white = (245,250,255,255)
+
+    _halo(d, 500, 390, 350)
+
+    # Crown
+    d.polygon([(390,255),(430,100),(500,195),(570,100),(610,255)], fill=gold)
+    d.ellipse((395,225,605,300), fill=gold, outline=white, width=4)
+
+    # Face and body
+    d.ellipse((365,270,635,560), fill=skin, outline=gold, width=7)
+    d.ellipse((425,365,465,405), fill=dark)
+    d.ellipse((535,365,575,405), fill=dark)
+    d.arc((430,420,570,510), 5, 175, fill=white, width=8)
+    d.ellipse((330,520,670,900), fill=yellow, outline=gold, width=7)
+
+    # Four arms
+    arms = [(360,570,190,350),(640,570,810,350),(360,690,180,810),(640,690,820,810)]
+    for x1,y1,x2,y2 in arms:
+        d.line((x1,y1,x2,y2), fill=skin, width=34)
+
+    # Conch, chakra, mace, lotus
+    d.ellipse((145,315,240,410), fill=white, outline=gold, width=5)
+    d.ellipse((770,315,865,410), fill=gold, outline=white, width=5)
+    d.line((815,355,815,430), fill=gold, width=10)
+    d.ellipse((130,775,235,880), outline=gold, width=14)
+    d.line((182,785,182,870), fill=gold, width=8)
+    d.line((182,830,225,810), fill=gold, width=8)
+
+    _draw_centered(d, "भगवान विष्णु", get_font(58), 900, gold)
+    _save_deity(img, path)
+
+
+def _make_shani(path):
+    img = _deity_canvas()
+    d = ImageDraw.Draw(img)
+    gold = (255, 210, 65, 255)
+    skin = (80,75,95,255)
+    blue = (35,55,110,255)
+    dark = (10,10,25,255)
+    white = (230,235,255,255)
+
+    _halo(d, 500, 390, 350)
+
+    # Dark halo ring
+    d.ellipse((190,80,810,700), outline=blue, width=18)
+
+    # Crown
+    d.polygon([(390,260),(440,105),(500,195),(560,105),(610,260)], fill=gold)
+    d.ellipse((395,225,605,295), fill=gold, outline=white, width=4)
+
+    # Face/body
+    d.ellipse((350,275,650,570), fill=skin, outline=gold, width=7)
+    d.ellipse((420,365,460,405), fill=white)
+    d.ellipse((540,365,580,405), fill=white)
+    d.ellipse((435,380,450,395), fill=dark)
+    d.ellipse((550,380,565,395), fill=dark)
+    d.ellipse((330,520,670,900), fill=blue, outline=gold, width=7)
+
+    # Staff
+    d.line((760,230,760,850), fill=gold, width=18)
+    d.ellipse((710,160,810,260), fill=gold, outline=white, width=5)
+
+    # Saturn ring
+    d.ellipse((170,500,830,700), outline=gold, width=10)
+
+    _draw_centered(d, "शनि देव", get_font(62), 900, gold)
+    _save_deity(img, path)
+
+
+DEITY_ARTISTS = {
+    "हनुमान जी": _make_hanuman,
+    "श्री गणेश जी": _make_ganesha,
+    "भगवान शिव": _make_shiva,
+    "महालक्ष्मी जी": _make_lakshmi,
+    "भगवान विष्णु": _make_vishnu,
+    "शनि देव": _make_shani,
+}
+
+
 def download_deity(item_index, deity, query):
+    """
+    No external image download is used.
+
+    Previous versions depended on Wikimedia Commons and failed in GitHub
+    Actions with HTTP 429 rate limits. This renderer creates six original,
+    deity-specific devotional illustrations locally. Therefore the workflow
+    has no network dependency and cannot fail because of an image CDN.
+    """
     destination = DEITIES / f"deity_{item_index:02d}.jpg"
 
-    # Reuse a previously downloaded real image.
-    if destination.exists():
-        try:
-            with Image.open(destination) as img:
-                if img.width > 300 and img.height > 300:
-                    return destination, "cached", ""
-        except Exception:
-            try:
-                destination.unlink()
-            except Exception:
-                pass
+    artist = DEITY_ARTISTS.get(deity)
 
-    search_queries = [
-        query,
-        f"{deity} Hindu deity",
-        f"{deity} temple",
-    ]
+    if artist is None:
+        raise RuntimeError(
+            f"No devotional artwork definition exists for {deity}."
+        )
 
-    last_error = None
+    print(
+        f"Creating devotional deity artwork locally: {deity}"
+    )
 
-    for search_query in search_queries:
-        try:
-            result = commons_search(search_query)
+    artist(destination)
 
-            if not result:
-                continue
-
-            print(
-                f"Resolved {deity}: "
-                f"{result['title']}"
+    with Image.open(destination) as img:
+        if img.width < 700 or img.height < 700:
+            raise RuntimeError(
+                f"Generated deity artwork is too small for {deity}."
             )
 
-            data = request_bytes(result["url"])
-
-            temp = destination.with_suffix(".download")
-            temp.write_bytes(data)
-
-            with Image.open(temp) as img:
-                img.verify()
-
-            # Reopen and normalize to JPEG.
-            with Image.open(temp) as img:
-                normalized = img.convert("RGB")
-                normalized.save(
-                    destination,
-                    "JPEG",
-                    quality=95,
-                )
-
-            temp.unlink(missing_ok=True)
-
-            return (
-                destination,
-                result["title"],
-                result["url"],
-            )
-
-        except Exception as exc:
-            last_error = exc
-            print(
-                f"Could not download {deity} "
-                f"from Commons: {exc}"
-            )
-
-    raise RuntimeError(
-        f"Could not obtain a real deity image for {deity}. "
-        f"Last error: {last_error}"
+    return (
+        destination,
+        f"Original devotional illustration - {deity}",
+        "Generated locally by the renderer; no external download",
     )
 
 
@@ -409,14 +663,15 @@ def prepare_deities():
     )
 
     credits = [
-        "REAL DEITY ARTWORK",
-        "==================",
+        "DEVOTIONAL DEITY ARTWORK",
+        "========================",
+        "",
+        "Artwork is generated locally by the video renderer.",
+        "No external image server is required.",
         "",
     ]
 
     resolved = {}
-
-    # Same deity gets the same downloaded image.
     unique = {}
 
     for _, _, deity, query in RASHIS:
@@ -436,8 +691,8 @@ def prepare_deities():
 
         credits.extend([
             deity,
-            f"Commons file: {title}",
-            f"Image URL: {source_url}",
+            title,
+            source_url,
             "",
         ])
 
@@ -1261,4 +1516,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
