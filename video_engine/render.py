@@ -1,5 +1,5 @@
 """
-Daily Astro Hindi Video Renderer - V8
+Daily Astro Hindi Video Renderer - V10
 
 Purpose:
 - Keep the existing generated astrology narration/script.
@@ -698,8 +698,9 @@ def _make_shani(path):
 # Do NOT use the old LACMA image URLs here. Those endpoints returned 404s.
 # We use The Metropolitan Museum of Art Open Access API for six deities.
 # The Met explicitly provides public-domain images through its Open Access API.
-# Shani uses the direct upload.wikimedia.org file URL, avoiding the Commons
-# API/search endpoint that previously returned HTTP 429 in GitHub Actions.
+# Shani also uses The Metropolitan Museum of Art Open Access API.
+# The selected record is the Met's public-domain iconographic drawing of
+# Saturn/Shanaishchara, so no Wikimedia request is made at runtime.
 
 MET_API = "https://collectionapi.metmuseum.org/public/collection/v1/objects/{}"
 
@@ -735,9 +736,9 @@ DEITY_SOURCES = {
         "credit": "The Metropolitan Museum of Art Open Access — Public Domain",
     },
     "शनि देव": {
-        "url": "https://upload.wikimedia.org/wikipedia/commons/9/9b/Shani_Deva.jpg",
-        "title": "Shani Deva — Raja Ravi Varma artwork",
-        "credit": "Wikimedia Commons — Public Domain artwork",
+        "met_id": 45617,
+        "title": "Iconographic Drawing of Saturn (Shanaishchara) — The Metropolitan Museum of Art, 1975.268.15",
+        "credit": "The Metropolitan Museum of Art Open Access — Public Domain",
     },
 }
 
