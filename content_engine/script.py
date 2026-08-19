@@ -1,47 +1,139 @@
 """
-Hindi daily content engine for Vedic / Jyotisha Gochar.
+Daily Hindi Vedic Jyotisha content engine.
 
-Flow:
-    Real planetary positions
-        ->
-    Chandra Rashi based gochar
-        ->
-    Classical Vedic interpretation
-        ->
-    Hindi daily narration
+Pipeline:
+
+    Ephemeris
+        ↓
+    Nirayana / Lahiri planetary positions
+        ↓
+    Chandra Rashi
+        ↓
+    Classical Gochar rules
+        ↓
+    Rashi classification
+        ↓
+    Hindi narration
 """
 
 from datetime import datetime
 
 from astro_engine.rules import (
-    SIGN_HI,
     rashi_summary,
 )
 
 
 # ============================================================
-# HELPERS
+# BASIC HELPERS
 # ============================================================
 
-def get_date_text(date):
+def date_text(date):
     if isinstance(date, datetime):
         return date.strftime("%d-%m-%Y")
 
     return str(date)
 
 
-def get_top_influences(summary, limit=2):
+def clean_text(text):
+    if not text:
+        return ""
+
+    text = text.replace(
+        "।।",
+        "।"
+    )
+
+    text = text.replace(
+        "  ",
+        " "
+    )
+
+    return text.strip()
+
+
+# ============================================================
+# EVENT NARRATION
+# ============================================================
+
+def build_event_section(events):
+
+    lines = []
+
+    lines.append(
+        "आज के प्रमुख ग्रह परिवर्तन:"
+    )
+
+    if not events:
+
+        lines.append(
+            "आज कोई प्रमुख राशि परिवर्तन दर्ज नहीं हुआ है। "
+            "इसलिए वर्तमान ग्रह स्थितियों के आधार पर "
+            "दैनिक गोचर के संकेत देखेंगे।"
+        )
+
+        return lines
+
+    count = 0
+
+    for event in events:
+
+        if count >= 4:
+            break
+
+        description = getattr(
+            event,
+            "description_hi",
+            ""
+        )
+
+        if description:
+
+            lines.append(
+                clean_text(
+                    description
+                )
+            )
+
+            count += 1
+
+    if count == 0:
+
+        lines.append(
+            "आज कोई प्रमुख राशि परिवर्तन दर्ज नहीं हुआ है।"
+        )
+
+    return lines
+
+
+# ============================================================
+# INFLUENCE SELECTION
+# ============================================================
+
+def strongest_influences(
+    summary,
+    limit=2
+):
+
     influences = summary.get(
         "influences",
         []
     )
 
-    # Prefer strongest classical influence.
+    # rules.py has already ranked these,
+    # but sorting again makes this function robust.
     ranked = sorted(
         influences,
         key=lambda item: (
-            abs(item.get("score", 0)),
-            item.get("score", 0)
+            abs(
+                item.get(
+                    "score",
+                    0
+                )
+            ),
+            item.get(
+                "score",
+                0
+            )
         ),
         reverse=True
     )
@@ -49,49 +141,114 @@ def get_top_influences(summary, limit=2):
     return ranked[:limit]
 
 
-def overall_text(summary):
+# ============================================================
+# OVERALL RASHI NARRATION
+# ============================================================
+
+def overall_sentence(
+    summary
+):
+
     overall = summary.get(
         "overall",
         "मिश्रित"
     )
 
     if overall == "अनुकूल":
+
         return (
-            "आज के गोचर से इस राशि के लिए "
-            "कुल मिलाकर सकारात्मक संकेत बन रहे हैं।"
+            "आज के प्रमुख ग्रह गोचर इस राशि के लिए "
+            "कुल मिलाकर अनुकूल संकेत दे रहे हैं।"
         )
 
     if overall == "सावधानी":
+
         return (
-            "आज इस राशि को महत्वपूर्ण मामलों में "
-            "सावधानी और धैर्य रखना बेहतर रहेगा।"
+            "आज के प्रमुख ग्रह गोचर इस राशि के लिए "
+            "सावधानी और धैर्य रखने का संकेत दे रहे हैं।"
         )
 
     return (
-        "आज इस राशि के लिए ग्रहों का प्रभाव "
-        "मिश्रित है, इसलिए संतुलित निर्णय लेना बेहतर रहेगा।"
+        "आज के प्रमुख ग्रह गोचर इस राशि के लिए "
+        "मिश्रित संकेत दे रहे हैं। इसलिए संतुलित "
+        "दृष्टिकोण रखना बेहतर रहेगा।"
     )
 
 
-def rashi_section(
-    summary,
-    index
+# ============================================================
+# PRACTICAL ADVICE
+# ============================================================
+
+def practical_advice(
+    summary
 ):
-    rashi = summary["rashi"]
+
+    overall = summary.get(
+        "overall",
+        "मिश्रित"
+    )
+
+    if overall == "अनुकूल":
+
+        return (
+            "करियर में आगे बढ़ने के अवसरों का लाभ लें। "
+            "धन के मामलों में योजनाबद्ध निर्णय करें और "
+            "रिश्तों में सकारात्मक संवाद बनाए रखें।"
+        )
+
+    if overall == "सावधानी":
+
+        return (
+            "करियर में जल्दबाजी से बचें। "
+            "धन संबंधी मामलों में अनावश्यक जोखिम न लें "
+            "और रिश्तों में धैर्य बनाए रखें।"
+        )
+
+    return (
+        "करियर और धन में संतुलित निर्णय लें। "
+        "रिश्तों में स्पष्ट संवाद रखें और "
+        "महत्वपूर्ण मामलों में जल्दबाजी से बचें।"
+    )
+
+
+# ============================================================
+# ONE RASHI
+# ============================================================
+
+def build_rashi_section(
+    summary
+):
+
+    rashi = summary.get(
+        "rashi",
+        "राशि"
+    )
 
     lines = []
+
+    # --------------------------------------------------------
+    # HEADING
+    # --------------------------------------------------------
 
     lines.append(
         f"{rashi} राशि:"
     )
 
+    # --------------------------------------------------------
+    # OVERALL CLASSIFICATION
+    # --------------------------------------------------------
+
     lines.append(
-        overall_text(
+        overall_sentence(
             summary
         )
     )
 
-    influences = get_top_influences(
+    # --------------------------------------------------------
+    # STRONGEST PLANETS
+    # --------------------------------------------------------
+
+    influences = strongest_influences(
         summary,
         limit=2
     )
@@ -104,38 +261,22 @@ def rashi_section(
         )
 
         if text:
+
             lines.append(
-                text
+                clean_text(
+                    text
+                )
             )
 
-    # Practical guidance.
-    score = summary.get(
-        "score",
-        0
+    # --------------------------------------------------------
+    # PRACTICAL ADVICE
+    # --------------------------------------------------------
+
+    lines.append(
+        practical_advice(
+            summary
+        )
     )
-
-    if score >= 5:
-
-        lines.append(
-            "करियर और धन से जुड़े अवसरों का "
-            "समझदारी से लाभ उठाएं और सकारात्मक "
-            "प्रयास जारी रखें।"
-        )
-
-    elif score <= -5:
-
-        lines.append(
-            "आज बड़े जोखिम और जल्दबाजी से बचें। "
-            "धन, करियर और रिश्तों में सोच-समझकर "
-            "निर्णय लेना बेहतर रहेगा।"
-        )
-
-    else:
-
-        lines.append(
-            "आज संतुलित दृष्टिकोण रखें और "
-            "महत्वपूर्ण निर्णय सोच-समझकर लें।"
-        )
 
     return " ".join(
         lines
@@ -143,7 +284,57 @@ def rashi_section(
 
 
 # ============================================================
-# MAIN SCRIPT BUILDER
+# HIGHLIGHTS
+# ============================================================
+
+def build_highlights(
+    summaries
+):
+
+    lines = []
+
+    favourable = [
+        summary["rashi"]
+        for summary in summaries
+        if summary.get(
+            "overall"
+        ) == "अनुकूल"
+    ]
+
+    cautious = [
+        summary["rashi"]
+        for summary in summaries
+        if summary.get(
+            "overall"
+        ) == "सावधानी"
+    ]
+
+    if favourable:
+
+        lines.append(
+            "आज अपेक्षाकृत अनुकूल संकेत "
+            + ", ".join(
+                favourable[:4]
+            )
+            + " राशि के लिए दिखाई दे रहे हैं।"
+        )
+
+    if cautious:
+
+        lines.append(
+            "वहीं "
+            + ", ".join(
+                cautious[:4]
+            )
+            + " राशि वालों को "
+            "आज धैर्य और सावधानी रखने की सलाह है।"
+        )
+
+    return lines
+
+
+# ============================================================
+# COMPLETE DAILY SCRIPT
 # ============================================================
 
 def build_daily_script(
@@ -159,58 +350,33 @@ def build_daily_script(
     # ========================================================
 
     lines.append(
-        "नमस्कार! स्वागत है आपके दैनिक वैदिक "
-        "ज्योतिष अपडेट में।"
+        "नमस्कार! स्वागत है आपके दैनिक "
+        "वैदिक ज्योतिष अपडेट में।"
     )
 
     lines.append(
-        "आज हम निरयन राशि और चंद्र राशि के आधार पर "
-        "ग्रह गोचर के प्रमुख प्रभाव जानेंगे।"
+        "आज हम निरयन ग्रह स्थिति और चंद्र राशि "
+        "के आधार पर बारहों राशियों के लिए "
+        "प्रमुख गोचर संकेत जानेंगे।"
     )
 
     lines.append(
-        f"आज की तारीख है {get_date_text(date)}।"
+        f"आज की तारीख है {date_text(date)}।"
     )
 
     # ========================================================
-    # TRANSIT EVENTS
+    # EVENTS
     # ========================================================
 
-    lines.append(
-        "आज के प्रमुख ग्रह परिवर्तन:"
-    )
-
-    if events:
-
-        for event in events[:5]:
-
-            description = getattr(
-                event,
-                "description_hi",
-                ""
-            )
-
-            if description:
-                lines.append(
-                    description
-                )
-
-    else:
-
-        lines.append(
-            "आज कोई प्रमुख राशि परिवर्तन दर्ज नहीं हुआ है। "
-            "इसलिए वर्तमान ग्रह स्थितियों के आधार पर "
-            "दैनिक गोचर के संकेत देखेंगे।"
+    lines.extend(
+        build_event_section(
+            events
         )
-
-    # ========================================================
-    # RASHI ANALYSIS
-    # ========================================================
-
-    lines.append(
-        "अब जानते हैं बारहों चंद्र राशियों पर "
-        "आज के ग्रह गोचर का प्रभाव।"
     )
+
+    # ========================================================
+    # CALCULATE ALL RASHIS
+    # ========================================================
 
     summaries = []
 
@@ -226,17 +392,23 @@ def build_daily_script(
         )
 
     # ========================================================
-    # EACH RASHI
+    # RASHI INTRO
     # ========================================================
 
-    for index, summary in enumerate(
-        summaries
-    ):
+    lines.append(
+        "अब जानते हैं बारहों चंद्र राशियों पर "
+        "आज के ग्रह गोचर का प्रभाव।"
+    )
+
+    # ========================================================
+    # ALL 12 RASHIS
+    # ========================================================
+
+    for summary in summaries:
 
         lines.append(
-            rashi_section(
-                summary,
-                index
+            build_rashi_section(
+                summary
             )
         )
 
@@ -244,48 +416,11 @@ def build_daily_script(
     # DAILY HIGHLIGHTS
     # ========================================================
 
-    ranked = sorted(
-        summaries,
-        key=lambda item: item.get(
-            "score",
-            0
-        ),
-        reverse=True
+    lines.extend(
+        build_highlights(
+            summaries
+        )
     )
-
-    best = [
-        item["rashi"]
-        for item in ranked
-        if item.get(
-            "score",
-            0
-        ) >= 5
-    ][:3]
-
-    caution = [
-        item["rashi"]
-        for item in reversed(ranked)
-        if item.get(
-            "score",
-            0
-        ) <= -5
-    ][:3]
-
-    if best:
-
-        lines.append(
-            "आज अपेक्षाकृत अनुकूल संकेत "
-            + ", ".join(best)
-            + " राशि के लिए दिखाई दे रहे हैं।"
-        )
-
-    if caution:
-
-        lines.append(
-            "सावधानी रखने वाली राशियों में "
-            + ", ".join(caution)
-            + " शामिल हैं।"
-        )
 
     # ========================================================
     # DISCLAIMER
@@ -299,7 +434,7 @@ def build_daily_script(
     )
 
     # ========================================================
-    # CTA
+    # CLOSING
     # ========================================================
 
     lines.append(
