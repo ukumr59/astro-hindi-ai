@@ -1,49 +1,112 @@
+"""
+Automated Hindi Vedic Astrology Video Renderer
+
+Uses:
+- edge-tts for Hindi narration
+- imageio-ffmpeg for a self-contained FFmpeg binary
+- Pillow for video artwork
+
+No apt-get.
+No system FFmpeg dependency.
+No system espeak dependency.
+"""
+
 from pathlib import Path
+import asyncio
 import subprocess
-import shutil
+import textwrap
+import urllib.request
+
+from PIL import Image, ImageDraw, ImageFont
+import edge_tts
+import imageio_ffmpeg
 
 
 OUTPUT = Path("output")
 
 SCRIPT = OUTPUT / "daily_script.md"
-AUDIO = OUTPUT / "daily_voice.wav"
+VOICE = OUTPUT / "daily_voice.mp3"
 VIDEO = OUTPUT / "daily_video.mp4"
-
+POSTER = OUTPUT / "video_poster.png"
 
 WIDTH = 1080
 HEIGHT = 1920
 FPS = 30
 
+VOICE_NAME = "hi-IN-SwaraNeural"
+
+
+# ------------------------------------------------------------
+# FONTS
+# ------------------------------------------------------------
+
+FONT_URL = (
+    "https://github.com/googlefonts/"
+    "noto-fonts/raw/main/hinted/ttf/"
+    "NotoSansDevanagari/"
+    "NotoSansDevanagari-Regular.ttf"
+)
+
+FONT_PATH = OUTPUT / "NotoSansDevanagari-Regular.ttf"
+
+
+def get_font(size):
+
+    if not FONT_PATH.exists():
+
+        print("Downloading Devanagari font...")
+
+        urllib.request.urlretrieve(
+            FONT_URL,
+            FONT_PATH
+        )
+
+    return ImageFont.truetype(
+        str(FONT_PATH),
+        size
+    )
+
+
+# ------------------------------------------------------------
+# COMMAND EXECUTION
+# ------------------------------------------------------------
 
 def run(command):
-    print("RUN:", " ".join(str(x) for x in command))
+
+    print(
+        "RUN:",
+        " ".join(
+            str(x)
+            for x in command
+        )
+    )
 
     result = subprocess.run(
         command,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
-        timeout=300,
+        timeout=600
     )
 
     print(result.stdout)
 
     if result.returncode != 0:
+
         raise RuntimeError(
-            f"Command failed with exit code {result.returncode}"
+            "Command failed with exit code "
+            f"{result.returncode}"
         )
 
 
-def require(command):
-    if shutil.which(command) is None:
-        raise RuntimeError(
-            f"{command} is not installed."
-        )
-
+# ------------------------------------------------------------
+# SCRIPT
+# ------------------------------------------------------------
 
 def read_script():
 
     if not SCRIPT.exists():
+
         raise RuntimeError(
             "output/daily_script.md was not generated."
         )
@@ -53,6 +116,7 @@ def read_script():
     ).strip()
 
     if not text:
+
         raise RuntimeError(
             "daily_script.md is empty."
         )
@@ -60,101 +124,242 @@ def read_script():
     return text
 
 
-def create_voice(text):
+# ------------------------------------------------------------
+# HINDI TTS
+# ------------------------------------------------------------
 
-    print("Generating local Hindi narration...")
+async def create_voice(text):
 
-    # espeak-ng has no network dependency.
-    run([
-        "espeak-ng",
-        "-v",
-        "hi",
-        "-s",
-        "145",
-        "-p",
-        "45",
-        "-a",
-        "150",
-        "-w",
-        str(AUDIO),
+    print(
+        "Generating Hindi narration..."
+    )
+
+    communicate = edge_tts.Communicate(
         text,
-    ])
+        VOICE_NAME,
+        rate="+5%",
+        volume="+0%"
+    )
 
-    if not AUDIO.exists():
+    await communicate.save(
+        str(VOICE)
+    )
+
+    if not VOICE.exists():
+
         raise RuntimeError(
-            "Hindi narration was not generated."
+            "Hindi voice file was not created."
         )
 
 
-def get_duration():
+# ------------------------------------------------------------
+# AUDIO DURATION
+# ------------------------------------------------------------
+
+def get_duration(ffmpeg):
 
     result = subprocess.run(
         [
-            "ffprobe",
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            str(AUDIO),
+            ffmpeg,
+            "-i",
+            str(VOICE)
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        timeout=30,
+        timeout=30
     )
 
-    if result.returncode != 0:
+    output = result.stderr
+
+    marker = "Duration:"
+
+    if marker not in output:
+
         raise RuntimeError(
-            result.stderr
+            "Unable to determine audio duration."
         )
 
-    return float(
-        result.stdout.strip()
+    value = output.split(
+        marker,
+        1
+    )[1].split(
+        ",",
+        1
+    )[0].strip()
+
+    hours, minutes, seconds = value.split(":")
+
+    return (
+        int(hours) * 3600
+        + int(minutes) * 60
+        + float(seconds)
     )
 
+
+# ------------------------------------------------------------
+# POSTER
+# ------------------------------------------------------------
+
+def create_poster(text):
+
+    print(
+        "Creating Hindi video artwork..."
+    )
+
+    image = Image.new(
+        "RGB",
+        (WIDTH, HEIGHT),
+        (19, 11, 43)
+    )
+
+    draw = ImageDraw.Draw(
+        image
+    )
+
+    title_font = get_font(
+        70
+    )
+
+    body_font = get_font(
+        44
+    )
+
+    small_font = get_font(
+        32
+    )
+
+    title = "दैनिक वैदिक ज्योतिष"
+
+    bbox = draw.textbbox(
+        (0, 0),
+        title,
+        font=title_font
+    )
+
+    title_width = (
+        bbox[2] - bbox[0]
+    )
+
+    draw.text(
+        (
+            (WIDTH - title_width) / 2,
+            120
+        ),
+        title,
+        font=title_font,
+        fill=(255, 215, 80)
+    )
+
+    # Take useful lines from generated script.
+    lines = [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip()
+    ]
+
+    display_text = "\n\n".join(
+        lines[:14]
+    )
+
+    wrapped = []
+
+    for paragraph in display_text.split(
+        "\n"
+    ):
+
+        wrapped.extend(
+            textwrap.wrap(
+                paragraph,
+                width=25
+            )
+        )
+
+    y = 330
+
+    for line in wrapped[:24]:
+
+        draw.text(
+            (
+                80,
+                y
+            ),
+            line,
+            font=body_font,
+            fill=(255, 255, 255)
+        )
+
+        y += 65
+
+        if y > 1600:
+            break
+
+    footer = (
+        "दैनिक चंद्र राशि आधारित गोचर विश्लेषण"
+    )
+
+    bbox = draw.textbbox(
+        (0, 0),
+        footer,
+        font=small_font
+    )
+
+    footer_width = (
+        bbox[2] - bbox[0]
+    )
+
+    draw.text(
+        (
+            (WIDTH - footer_width) / 2,
+            1800
+        ),
+        footer,
+        font=small_font,
+        fill=(220, 215, 235)
+    )
+
+    image.save(
+        POSTER,
+        quality=95
+    )
+
+
+# ------------------------------------------------------------
+# VIDEO
+# ------------------------------------------------------------
 
 def create_video():
 
-    duration = get_duration()
+    print(
+        "Loading bundled FFmpeg..."
+    )
+
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
 
     print(
-        f"Creating {WIDTH}x{HEIGHT} vertical video "
-        f"for {duration:.1f} seconds..."
+        f"FFmpeg: {ffmpeg}"
     )
 
-    filter_graph = (
-        "drawtext="
-        "fontfile=/usr/share/fonts/truetype/"
-        "noto/NotoSansDevanagari-Regular.ttf:"
-        "text='दैनिक वैदिक ज्योतिष':"
-        "fontcolor=white:"
-        "fontsize=64:"
-        "x=(w-text_w)/2:"
-        "y=110:"
-        "box=1:"
-        "boxcolor=black@0.45:"
-        "boxborderw=24"
+    duration = get_duration(
+        ffmpeg
     )
 
+    print(
+        f"Audio duration: {duration:.1f}s"
+    )
+
+    # Generate a video from the poster image.
     run([
-        "ffmpeg",
+        ffmpeg,
         "-y",
-        "-f",
-        "lavfi",
+        "-loop",
+        "1",
         "-i",
-        (
-            f"color=c=0x130B2B:"
-            f"s={WIDTH}x{HEIGHT}:"
-            f"r={FPS}"
-        ),
+        str(POSTER),
         "-i",
-        str(AUDIO),
-        "-vf",
-        filter_graph,
+        str(VOICE),
         "-t",
-        str(duration),
+        f"{duration:.2f}",
         "-r",
         str(FPS),
         "-c:v",
@@ -170,14 +375,19 @@ def create_video():
         "-b:a",
         "128k",
         "-shortest",
-        str(VIDEO),
+        str(VIDEO)
     ])
 
     if not VIDEO.exists():
+
         raise RuntimeError(
-            "Video was not created."
+            "daily_video.mp4 was not created."
         )
 
+
+# ------------------------------------------------------------
+# MAIN
+# ------------------------------------------------------------
 
 def main():
 
@@ -186,24 +396,47 @@ def main():
         exist_ok=True
     )
 
-    require("ffmpeg")
-    require("ffprobe")
-    require("espeak-ng")
-
     text = read_script()
 
-    create_voice(text)
+    print(
+        "Script loaded successfully."
+    )
+
+    asyncio.run(
+        create_voice(text)
+    )
+
+    create_poster(
+        text
+    )
 
     create_video()
 
     print()
-    print("======================================")
-    print("VIDEO GENERATION SUCCESSFUL")
-    print("======================================")
-    print(f"Script : {SCRIPT}")
-    print(f"Audio  : {AUDIO}")
-    print(f"Video  : {VIDEO}")
-    print("======================================")
+    print(
+        "======================================"
+    )
+    print(
+        "VIDEO GENERATION COMPLETE"
+    )
+    print(
+        "======================================"
+    )
+    print(
+        f"Script : {SCRIPT}"
+    )
+    print(
+        f"Voice  : {VOICE}"
+    )
+    print(
+        f"Poster : {POSTER}"
+    )
+    print(
+        f"Video  : {VIDEO}"
+    )
+    print(
+        "======================================"
+    )
 
 
 if __name__ == "__main__":
