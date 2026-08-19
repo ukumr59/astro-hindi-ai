@@ -8,8 +8,7 @@ System:
 
 Purpose:
     Calculate classical transit houses and generate
-    structured Hindi interpretations for the daily
-    Chandra-Rashi horoscope.
+    structured Hindi interpretations for daily horoscope.
 """
 
 # ============================================================
@@ -28,7 +27,6 @@ PLANET_HI = {
     "Ketu": "केतु",
 }
 
-
 SIGN_HI = [
     "मेष",
     "वृषभ",
@@ -46,7 +44,7 @@ SIGN_HI = [
 
 
 # ============================================================
-# CLASSICAL GOCHARA HOUSE GROUPS
+# CLASSICAL GOCHARA
 # ============================================================
 
 FAVOURABLE_HOUSES = {
@@ -60,7 +58,6 @@ FAVOURABLE_HOUSES = {
     "Rahu": {3, 6, 10, 11},
     "Ketu": {3, 6, 10, 11},
 }
-
 
 CHALLENGING_HOUSES = {
     "Sun": {1, 2, 4, 5, 7, 8, 9, 12},
@@ -76,7 +73,7 @@ CHALLENGING_HOUSES = {
 
 
 # ============================================================
-# GRAHA DRISHTI
+# SPECIAL DRISHTI
 # ============================================================
 
 SPECIAL_ASPECTS = {
@@ -129,10 +126,6 @@ PLANET_THEMES = {
 }
 
 
-# ============================================================
-# HOUSE NAMES
-# ============================================================
-
 HOUSE_ORDINAL_HI = {
     1: "पहले",
     2: "दूसरे",
@@ -157,7 +150,7 @@ def house_text(house):
 
 
 # ============================================================
-# HOUSE FROM CHANDRA RASHI
+# HOUSE FROM MOON SIGN
 # ============================================================
 
 def relative_house(
@@ -173,32 +166,18 @@ def relative_house(
 # DRISHTI
 # ============================================================
 
-def aspect_houses(planet):
-
-    return SPECIAL_ASPECTS.get(
-        planet,
-        {7}
-    )
-
-
 def get_aspected_houses(
     planet,
     transit_house
 ):
-
     result = []
 
-    for aspect in aspect_houses(
-        planet
+    for aspect in SPECIAL_ASPECTS.get(
+        planet,
+        {7}
     ):
-
         target = (
-            (
-                transit_house
-                - 1
-                + aspect
-                - 1
-            ) % 12
+            (transit_house - 1 + aspect - 1) % 12
         ) + 1
 
         result.append(
@@ -213,25 +192,19 @@ def get_aspected_houses(
 def aspect_names(planet):
 
     if planet == "Mars":
-        return (
-            "मंगल की 4वीं, 7वीं और 8वीं दृष्टि"
-        )
+        return "मंगल की 4वीं, 7वीं और 8वीं दृष्टि"
 
     if planet == "Jupiter":
-        return (
-            "गुरु की 5वीं, 7वीं और 9वीं दृष्टि"
-        )
+        return "गुरु की 5वीं, 7वीं और 9वीं दृष्टि"
 
     if planet == "Saturn":
-        return (
-            "शनि की 3वीं, 7वीं और 10वीं दृष्टि"
-        )
+        return "शनि की 3वीं, 7वीं और 10वीं दृष्टि"
 
     return "ग्रह की 7वीं दृष्टि"
 
 
 # ============================================================
-# PLANETARY TRANSIT QUALITY
+# TRANSIT QUALITY
 # ============================================================
 
 def transit_quality(
@@ -241,10 +214,10 @@ def transit_quality(
     """
     Classical general Gochar quality.
 
-    +2 = strongly favourable
-    +1 = favourable
-     0 = neutral
-    -1 = challenging
+    +2 strongly favourable
+    +1 favourable
+     0 neutral
+    -1 challenging
     """
 
     if house in FAVOURABLE_HOUSES.get(
@@ -252,36 +225,11 @@ def transit_quality(
         set()
     ):
 
-        # Strong classical transit positions.
-        if planet == "Saturn" and house in {
-            3,
-            6,
-            11,
-        }:
-            return 2
-
-        if planet == "Jupiter" and house in {
-            2,
-            5,
-            7,
-            9,
-            11,
-        }:
-            return 2
-
-        if planet == "Mars" and house in {
-            3,
-            6,
-            10,
-            11,
-        }:
-            return 2
-
-        if planet == "Sun" and house in {
-            3,
-            6,
-            10,
-            11,
+        if planet in {
+            "Saturn",
+            "Jupiter",
+            "Mars",
+            "Sun",
         }:
             return 2
 
@@ -297,7 +245,7 @@ def transit_quality(
 
 
 # ============================================================
-# SCORE MODIFIER
+# INDIVIDUAL PLANET SCORE
 # ============================================================
 
 def transit_score(
@@ -317,8 +265,6 @@ def transit_score(
         house
     )
 
-    # Retrograde modifies confidence/strength,
-    # but does not completely reverse classical Gochar.
     if (
         retrograde
         and planet not in {
@@ -328,9 +274,6 @@ def transit_score(
     ):
 
         if score > 0:
-            score -= 1
-
-        elif score < 0:
             score -= 1
 
     return max(
@@ -343,7 +286,7 @@ def transit_score(
 
 
 # ============================================================
-# RETROGRADE INTERPRETATION
+# RETROGRADE
 # ============================================================
 
 def retrograde_modifier(
@@ -427,7 +370,7 @@ def interpret_for_rashi(
         house
     )
 
-    if quality >= 1:
+    if quality > 0:
 
         text = (
             f"{name} {sign_name} राशि में "
@@ -436,7 +379,7 @@ def interpret_for_rashi(
             f"{theme} को सकारात्मक दिशा मिल सकती है।"
         )
 
-    elif quality <= -1:
+    elif quality < 0:
 
         text = (
             f"{name} {sign_name} राशि में "
@@ -450,11 +393,10 @@ def interpret_for_rashi(
         text = (
             f"{name} {sign_name} राशि में "
             f"{house_text(house)} भाव में गोचर कर रहा है। "
-            f"इसका प्रभाव {house_theme} से जुड़े "
-            f"मामलों पर दिखाई दे सकता है।"
+            f"{house_theme} से जुड़े मामलों में "
+            f"सामान्य प्रभाव दिखाई दे सकता है।"
         )
 
-    # Special Drishti.
     if planet in {
         "Mars",
         "Jupiter",
@@ -478,52 +420,133 @@ def interpret_for_rashi(
             f"{target_text} भावों को भी प्रभावित करती है।"
         )
 
-    retro_text = retrograde_modifier(
+    retro = retrograde_modifier(
         planet,
         retrograde
     )
 
-    if retro_text:
-        text += " " + retro_text
+    if retro:
+        text += " " + retro
 
     return text
 
 
 # ============================================================
-# OVERALL RASHI SCORE
+# OVERALL CLASSIFICATION
 # ============================================================
 
-def calculate_rashi_score(
+def classify_rashi(
     influences
 ):
     """
-    Calculate overall Chandra-Rashi score.
+    Determine overall Rashi quality from the strongest
+    classical transit influences.
 
-    Slow planets receive greater weight because their
-    Gochar influence persists longer.
+    Important principle:
+    A strong Jupiter/Saturn/Rahu/Ketu transit should not
+    be cancelled by several weak fast-planet transits.
 
-    Jupiter / Saturn / Rahu / Ketu:
-        weight 2.0
-
-    Mars:
-        weight 1.5
-
-    Sun / Venus / Mercury:
-        weight 1.0
-
-    Moon:
-        weight 0.5
+    Priority:
+        Jupiter / Saturn / Rahu / Ketu
+        Mars
+        Sun / Mercury / Venus
+        Moon
     """
 
+    slow = []
+    medium = []
+    fast = []
+
+    for item in influences:
+
+        planet = item["planet"]
+        score = item["score"]
+
+        if planet in {
+            "Jupiter",
+            "Saturn",
+            "Rahu",
+            "Ketu",
+        }:
+            slow.append(score)
+
+        elif planet == "Mars":
+            medium.append(score)
+
+        else:
+            fast.append(score)
+
+    slow_positive = sum(
+        1
+        for score in slow
+        if score > 0
+    )
+
+    slow_negative = sum(
+        1
+        for score in slow
+        if score < 0
+    )
+
+    medium_positive = sum(
+        1
+        for score in medium
+        if score > 0
+    )
+
+    medium_negative = sum(
+        1
+        for score in medium
+        if score < 0
+    )
+
+    # Strong favourable slow-planet transit.
+    if slow_positive > slow_negative:
+        return "अनुकूल"
+
+    # Strong challenging slow-planet dominance.
+    if slow_negative > slow_positive:
+        return "सावधानी"
+
+    # Mars can decide the day when slow planets are neutral.
+    if medium_positive > medium_negative:
+        return "अनुकूल"
+
+    if medium_negative > medium_positive:
+        return "सावधानी"
+
+    # Fast planets decide only when the major planets
+    # are balanced.
+    fast_score = sum(
+        fast
+    )
+
+    if fast_score >= 2:
+        return "अनुकूल"
+
+    if fast_score <= -2:
+        return "सावधानी"
+
+    return "मिश्रित"
+
+
+# ============================================================
+# NUMERICAL SCORE FOR RANKING ONLY
+# ============================================================
+
+def ranking_score(
+    influences
+):
+
     weights = {
-        "Jupiter": 2.0,
-        "Saturn": 2.0,
-        "Rahu": 2.0,
-        "Ketu": 2.0,
-        "Mars": 1.5,
-        "Sun": 1.0,
-        "Venus": 1.0,
+        "Jupiter": 5.0,
+        "Saturn": 5.0,
+        "Rahu": 4.0,
+        "Ketu": 4.0,
+        "Mars": 3.0,
+        "Sun": 1.5,
         "Mercury": 1.0,
+        "Venus": 1.0,
         "Moon": 0.5,
     }
 
@@ -531,41 +554,22 @@ def calculate_rashi_score(
 
     for item in influences:
 
-        planet = item.get(
-            "planet"
-        )
+        planet = item["planet"]
 
-        score = item.get(
-            "score",
-            0
-        )
-
-        weight = weights.get(
-            planet,
-            1.0
-        )
+        score = item["score"]
 
         total += (
-            score * weight
+            score
+            * weights.get(
+                planet,
+                1.0
+            )
         )
 
     return round(
         total,
         2
     )
-
-
-def overall_label(
-    score
-):
-
-    if score >= 5:
-        return "अनुकूल"
-
-    if score <= -5:
-        return "सावधानी"
-
-    return "मिश्रित"
 
 
 # ============================================================
@@ -608,7 +612,7 @@ def rashi_summary(
             "retrograde": position.retrograde,
         })
 
-    # Strongest influences first.
+    # Strongest first.
     influences.sort(
         key=lambda item: (
             abs(
@@ -619,7 +623,11 @@ def rashi_summary(
         reverse=True
     )
 
-    total_score = calculate_rashi_score(
+    score = ranking_score(
+        influences
+    )
+
+    overall = classify_rashi(
         influences
     )
 
@@ -627,9 +635,7 @@ def rashi_summary(
         "rashi": SIGN_HI[
             rashi_index
         ],
-        "score": total_score,
-        "overall": overall_label(
-            total_score
-        ),
+        "score": score,
+        "overall": overall,
         "influences": influences,
     }
