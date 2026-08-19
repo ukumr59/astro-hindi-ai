@@ -1,51 +1,92 @@
 from pathlib import Path
-import asyncio
 import subprocess
 import shutil
-import edge_tts
 
 
 OUTPUT = Path("output")
+
 SCRIPT = OUTPUT / "daily_script.md"
-VOICE = OUTPUT / "daily_voice.mp3"
+AUDIO = OUTPUT / "daily_voice.wav"
 VIDEO = OUTPUT / "daily_video.mp4"
 
 
-VOICE_NAME = "hi-IN-SwaraNeural"
+WIDTH = 1080
+HEIGHT = 1920
+FPS = 30
 
 
-def run(cmd):
-    print("RUN:", " ".join(str(x) for x in cmd))
+def run(command):
+    print("RUN:", " ".join(str(x) for x in command))
 
     result = subprocess.run(
-        cmd,
+        command,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        timeout=300,
     )
 
     print(result.stdout)
 
     if result.returncode != 0:
         raise RuntimeError(
-            f"Command failed: {result.returncode}"
+            f"Command failed with exit code {result.returncode}"
         )
 
 
-async def make_voice(text):
+def require(command):
+    if shutil.which(command) is None:
+        raise RuntimeError(
+            f"{command} is not installed."
+        )
 
-    communicate = edge_tts.Communicate(
+
+def read_script():
+
+    if not SCRIPT.exists():
+        raise RuntimeError(
+            "output/daily_script.md was not generated."
+        )
+
+    text = SCRIPT.read_text(
+        encoding="utf-8"
+    ).strip()
+
+    if not text:
+        raise RuntimeError(
+            "daily_script.md is empty."
+        )
+
+    return text
+
+
+def create_voice(text):
+
+    print("Generating local Hindi narration...")
+
+    # espeak-ng has no network dependency.
+    run([
+        "espeak-ng",
+        "-v",
+        "hi",
+        "-s",
+        "145",
+        "-p",
+        "45",
+        "-a",
+        "150",
+        "-w",
+        str(AUDIO),
         text,
-        VOICE_NAME,
-        rate="+5%",
-    )
+    ])
 
-    await communicate.save(
-        str(VOICE)
-    )
+    if not AUDIO.exists():
+        raise RuntimeError(
+            "Hindi narration was not generated."
+        )
 
 
-def duration():
+def get_duration():
 
     result = subprocess.run(
         [
@@ -56,23 +97,34 @@ def duration():
             "format=duration",
             "-of",
             "default=noprint_wrappers=1:nokey=1",
-            str(VOICE),
+            str(AUDIO),
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        timeout=30,
     )
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            result.stderr
+        )
 
     return float(
         result.stdout.strip()
     )
 
 
-def make_video():
+def create_video():
 
-    seconds = duration()
+    duration = get_duration()
 
-    filter_text = (
+    print(
+        f"Creating {WIDTH}x{HEIGHT} vertical video "
+        f"for {duration:.1f} seconds..."
+    )
+
+    filter_graph = (
         "drawtext="
         "fontfile=/usr/share/fonts/truetype/"
         "noto/NotoSansDevanagari-Regular.ttf:"
@@ -80,108 +132,79 @@ def make_video():
         "fontcolor=white:"
         "fontsize=64:"
         "x=(w-text_w)/2:"
-        "y=120:"
+        "y=110:"
         "box=1:"
         "boxcolor=black@0.45:"
-        "boxborderw=20"
+        "boxborderw=24"
     )
 
-    run(
-        [
-            "ffmpeg",
-            "-y",
-            "-f",
-            "lavfi",
-            "-i",
-            "color=c=0x130B2B:"
-            "s=1080x1920:"
-            "r=30",
-            "-i",
-            str(VOICE),
-            "-vf",
-            filter_text,
-            "-t",
-            str(seconds),
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-crf",
-            "23",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "128k",
-            "-shortest",
-            str(VIDEO),
-        ]
-    )
+    run([
+        "ffmpeg",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        (
+            f"color=c=0x130B2B:"
+            f"s={WIDTH}x{HEIGHT}:"
+            f"r={FPS}"
+        ),
+        "-i",
+        str(AUDIO),
+        "-vf",
+        filter_graph,
+        "-t",
+        str(duration),
+        "-r",
+        str(FPS),
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "23",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-shortest",
+        str(VIDEO),
+    ])
+
+    if not VIDEO.exists():
+        raise RuntimeError(
+            "Video was not created."
+        )
 
 
-def render():
+def main():
 
     OUTPUT.mkdir(
         parents=True,
         exist_ok=True
     )
 
-    if not SCRIPT.exists():
-        raise SystemExit(
-            "daily_script.md not found."
-        )
+    require("ffmpeg")
+    require("ffprobe")
+    require("espeak-ng")
 
-    if shutil.which("ffmpeg") is None:
-        raise SystemExit(
-            "FFmpeg is not installed."
-        )
+    text = read_script()
 
-    if shutil.which("ffprobe") is None:
-        raise SystemExit(
-            "FFprobe is not installed."
-        )
+    create_voice(text)
 
-    text = SCRIPT.read_text(
-        encoding="utf-8"
-    ).strip()
-
-    if not text:
-        raise SystemExit(
-            "daily_script.md is empty."
-        )
-
-    print(
-        "Generating ONE Hindi narration file..."
-    )
-
-    asyncio.run(
-        make_voice(text)
-    )
-
-    print(
-        "Generating video..."
-    )
-
-    make_video()
+    create_video()
 
     print()
-    print(
-        "================================"
-    )
-    print(
-        "VIDEO GENERATION COMPLETE"
-    )
-    print(
-        f"Voice: {VOICE}"
-    )
-    print(
-        f"Video: {VIDEO}"
-    )
-    print(
-        "================================"
-    )
+    print("======================================")
+    print("VIDEO GENERATION SUCCESSFUL")
+    print("======================================")
+    print(f"Script : {SCRIPT}")
+    print(f"Audio  : {AUDIO}")
+    print(f"Video  : {VIDEO}")
+    print("======================================")
 
 
 if __name__ == "__main__":
-    render()
+    main()
