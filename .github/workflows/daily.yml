@@ -2,7 +2,6 @@ name: Daily Astro Hindi Video
 
 on:
   schedule:
-    # 8:00 AM India time (IST)
     - cron: "30 2 * * *"
   workflow_dispatch:
 
@@ -15,6 +14,8 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    timeout-minutes: 10
+
     steps:
 
       - name: Checkout project
@@ -25,10 +26,14 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install FFmpeg
+      - name: Install system packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg fonts-noto-core fonts-noto-extra
+          sudo apt-get install -y \
+            ffmpeg \
+            espeak-ng \
+            fonts-noto-core \
+            fonts-noto-extra
 
       - name: Install Python dependencies
         run: |
@@ -45,12 +50,13 @@ jobs:
 
       - name: Check generated files
         run: |
-          echo "===== OUTPUT FILES ====="
+          echo "===== GENERATED FILES ====="
           ls -lah output
-          echo "========================"
+          echo "==========================="
 
           test -f output/daily_script.md
-          test -f output/daily_voice.mp3
+          test -f output/planetary_report.txt
+          test -f output/daily_voice.wav
           test -f output/daily_video.mp4
 
       - name: Upload generated files
@@ -60,17 +66,6 @@ jobs:
           path: |
             output/daily_script.md
             output/planetary_report.txt
-            output/daily_voice.mp3
-            output/daily_subtitles.ass
+            output/daily_voice.wav
             output/daily_video.mp4
           retention-days: 7
-
-      - name: YouTube publishing
-        if: ${{ vars.YOUTUBE_ENABLED == 'true' }}
-        run: |
-          echo "YouTube publishing will be activated after API credentials are configured."
-
-      - name: Facebook publishing
-        if: ${{ vars.FACEBOOK_ENABLED == 'true' }}
-        run: |
-          echo "Facebook publishing will be activated after API credentials are configured."
