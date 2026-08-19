@@ -21,6 +21,10 @@ SIGN_HI = [
 ]
 
 
+# Real planetary bodies available in JPL DE440s.
+#
+# Skyfield's DE440s ephemeris uses barycenters for
+# Mars, Jupiter and Saturn.
 PLANETS = {
     "Sun": "SUN",
     "Moon": "MOON",
@@ -44,46 +48,58 @@ class RealEphemeris(EphemerisBackend):
     Real astronomical planetary engine.
 
     Astronomical source:
-        JPL DE440s via Skyfield
+        JPL DE440s via Skyfield.
 
     Zodiac:
-        Sidereal zodiac using a Lahiri/Chitrapaksha ayanamsa model.
+        Sidereal zodiac using Lahiri / Chitrapaksha ayanamsa.
 
-    Output:
-        PlanetPosition objects compatible with the existing
-        astrology engine.
+    Planets:
+        Sun, Moon, Mercury, Venus, Mars, Jupiter, Saturn.
+
+    Lunar nodes:
+        Mean Rahu and Ketu, converted to sidereal longitude
+        using the same Lahiri ayanamsa.
+
+    This engine is designed to run automatically on GitHub Actions.
     """
 
     def __init__(self):
+
         self.ts = load.timescale()
 
-        # JPL DE440s is downloaded automatically by Skyfield
-        # the first time it is needed.
+        # JPL DE440s covers 1849–2150.
         self.planets = load("de440s.bsp")
 
-        self.earth = self.planets["earth"]
+        self.earth = self.planets["EARTH"]
+
+    # ---------------------------------------------------------
+    # GENERAL ANGLE FUNCTIONS
+    # ---------------------------------------------------------
 
     @staticmethod
     def normalize(degrees):
-        """Return an angle between 0 and 360 degrees."""
+        """Normalize longitude to 0–360 degrees."""
+
         return degrees % 360.0
 
     @staticmethod
     def julian_centuries(jd):
-        """Julian centuries measured from J2000.0."""
+        """Julian centuries from J2000.0."""
+
         return (jd - 2451545.0) / 36525.0
+
+    # ---------------------------------------------------------
+    # LAHIRI AYANAMSA
+    # ---------------------------------------------------------
 
     @classmethod
     def lahiri_ayanamsa(cls, jd):
         """
         Approximate Lahiri / Chitrapaksha ayanamsa.
 
-        Reference epoch:
-            J2000.0
-
-        The formula is isolated here so it can later be replaced
-        with a higher-precision implementation without changing
-        the rest of the application.
+        The calculation is isolated in this function so that
+        it can later be replaced by a higher precision
+        implementation without changing the rest of the engine.
         """
 
         t = cls.julian_centuries(jd)
@@ -94,37 +110,76 @@ class RealEphemeris(EphemerisBackend):
             + 0.0003086 * t * t
         )
 
+    # ---------------------------------------------------------
+    # TROPICAL LONGITUDE
+    # ---------------------------------------------------------
+
     def tropical_longitude(self, body_name, t):
-        """Calculate geocentric apparent ecliptic longitude."""
+        """
+        Calculate geocentric apparent ecliptic longitude.
+        """
 
         body = self.planets[body_name]
 
         astrometric = self.earth.at(t).observe(body)
+
         apparent = astrometric.apparent()
 
         _, longitude, _ = apparent.ecliptic_latlon()
 
         return float(longitude.degrees)
 
+    # ---------------------------------------------------------
+    # SIDEREAL LONGITUDE
+    # ---------------------------------------------------------
+
     def sidereal_longitude(self, body_name, t):
-        """Convert tropical longitude to Lahiri sidereal longitude."""
+        """
+        Convert tropical longitude to Lahiri sidereal longitude.
+        """
 
-        tropical = self.tropical_longitude(body_name, t)
+        tropical = self.tropical_longitude(
+            body_name,
+            t
+        )
 
-        ayanamsa = self.lahiri_ayanamsa(t.tt)
+        ayanamsa = self.lahiri_ayanamsa(
+            t.tt
+        )
 
-        return self.normalize(tropical - ayanamsa)
+        return self.normalize(
+            tropical - ayanamsa
+        )
+
+    # ---------------------------------------------------------
+    # RASHI
+    # ---------------------------------------------------------
 
     @staticmethod
     def sign_index(longitude):
-        """Convert longitude to a 0–11 zodiac-sign index."""
+        """
+        Convert sidereal longitude to zodiac sign index.
+
+        0 = मेष
+        1 = वृषभ
+        ...
+        11 = मीन
+        """
+
+        longitude = longitude % 360.0
+
         return int(longitude // 30)
+
+    # ---------------------------------------------------------
+    # RETROGRADE
+    # ---------------------------------------------------------
 
     def is_retrograde(self, body_name, t):
         """
-        Estimate apparent retrograde motion by comparing
-        sidereal longitude 12 hours before and after the
-        requested time.
+        Estimate apparent retrograde motion.
+
+        The planetary longitude is checked 12 hours before
+        and 12 hours after the requested time.
         """
 
         dt = t.utc_datetime()
@@ -147,9 +202,16 @@ class RealEphemeris(EphemerisBackend):
             after_time
         )
 
-        movement = ((after - before + 180.0) % 360.0) - 180.0
+        movement = (
+            (after - before + 180.0)
+            % 360.0
+        ) - 180.0
 
         return movement < 0
+
+    # ---------------------------------------------------------
+    # MAIN POSITION CALCULATION
+    # ---------------------------------------------------------
 
     def positions(self, when=None):
 
@@ -157,11 +219,19 @@ class RealEphemeris(EphemerisBackend):
             when = datetime.now(timezone.utc)
 
         if when.tzinfo is None:
-            when = when.replace(tzinfo=timezone.utc)
+            when = when.replace(
+                tzinfo=timezone.utc
+            )
 
-        t = self.ts.from_datetime(when)
+        t = self.ts.from_datetime(
+            when
+        )
 
         results = []
+
+        # -----------------------------------------------------
+        # SUN THROUGH SATURN
+        # -----------------------------------------------------
 
         for planet, body_name in PLANETS.items():
 
@@ -170,11 +240,16 @@ class RealEphemeris(EphemerisBackend):
                 t
             )
 
-            sign_index = self.sign_index(longitude)
+            sign_index = self.sign_index(
+                longitude
+            )
 
             retrograde = False
 
-            if planet not in {"Sun", "Moon"}:
+            if planet not in {
+                "Sun",
+                "Moon"
+            }:
                 retrograde = self.is_retrograde(
                     body_name,
                     t
@@ -189,41 +264,77 @@ class RealEphemeris(EphemerisBackend):
                 )
             )
 
-        # ---------------------------------------------------------
+        # -----------------------------------------------------
         # RAHU
-        # ---------------------------------------------------------
+        # -----------------------------------------------------
         #
-        # Mean lunar ascending node.
+        # Calculate MEAN lunar ascending node.
         #
-        # Rahu and Ketu are not physical planets. They are calculated
-        # lunar nodes and therefore handled separately.
+        # IMPORTANT:
+        # The classical node formula produces a TROPICAL
+        # longitude.
+        #
+        # Therefore we MUST subtract Lahiri ayanamsa before
+        # assigning the Vedic / sidereal Rashi.
         #
 
-        T = self.julian_centuries(t.tt)
+        T = self.julian_centuries(
+            t.tt
+        )
 
-        rahu = self.normalize(
+        raw_rahu = self.normalize(
             125.04452
             - 1934.136261 * T
             + 0.0020708 * T * T
             + (T * T * T) / 450000.0
         )
 
-        ketu = self.normalize(rahu + 180.0)
+        # Convert tropical Rahu to sidereal Rahu.
+        ayanamsa = self.lahiri_ayanamsa(
+            t.tt
+        )
+
+        rahu = self.normalize(
+            raw_rahu - ayanamsa
+        )
+
+        # -----------------------------------------------------
+        # KETU
+        # -----------------------------------------------------
+        #
+        # Ketu is exactly 180° opposite Rahu.
+        #
+
+        ketu = self.normalize(
+            rahu + 180.0
+        )
+
+        # -----------------------------------------------------
+        # RAHU RESULT
+        # -----------------------------------------------------
 
         results.append(
             PlanetPosition(
                 planet="Rahu",
                 longitude=rahu,
-                sign_index=self.sign_index(rahu),
+                sign_index=self.sign_index(
+                    rahu
+                ),
                 retrograde=True
             )
         )
+
+        # -----------------------------------------------------
+        # KETU RESULT
+        # -----------------------------------------------------
 
         results.append(
             PlanetPosition(
                 planet="Ketu",
                 longitude=ketu,
-                sign_index=self.sign_index(ketu),
+                sign_index=self.sign_index(
+                    ketu
+                ),
                 retrograde=True
             )
         )
@@ -231,8 +342,12 @@ class RealEphemeris(EphemerisBackend):
         return results
 
 
-# Backward-compatible alias.
+# -------------------------------------------------------------
+# BACKWARD COMPATIBILITY
+# -------------------------------------------------------------
 #
-# Existing code may still import EphemerisBackend.
-# Real production calculations use RealEphemeris.
+# Existing modules may import Ephemeris.
+# Keep this alias so that the rest of the project does not break.
+#
+
 Ephemeris = RealEphemeris
