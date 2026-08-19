@@ -52,6 +52,9 @@ IMPORTANT_PLANETS = {
 # ============================================================
 
 def planet_name(planet):
+    """
+    Return the Hindi name of a planet.
+    """
     return PLANET_HI.get(
         planet,
         planet
@@ -78,7 +81,8 @@ def format_position(position):
         retrograde = " (वक्री)"
 
     return (
-        f"{name} {position.longitude:.2f}° "
+        f"{name} "
+        f"{position.longitude:.2f}° "
         f"{sign}{retrograde}"
     )
 
@@ -97,9 +101,8 @@ def event_lines(events):
     lines = []
 
     for event in events[:4]:
-
         lines.append(
-            f"{event.description_hi}"
+            event.description_hi
         )
 
     return lines
@@ -138,7 +141,6 @@ def short_influence_text(influence):
 
     text = influence["text"]
 
-    # Prevent excessively long individual sections.
     sentences = text.split("।")
 
     sentences = [
@@ -149,6 +151,9 @@ def short_influence_text(influence):
 
     if len(sentences) > 2:
         sentences = sentences[:2]
+
+    if not sentences:
+        return ""
 
     return "। ".join(sentences) + "।"
 
@@ -206,7 +211,6 @@ def build_daily_script(date, positions, events):
     )
 
     for position in positions:
-
         lines.append(
             format_position(position)
         )
@@ -274,8 +278,14 @@ def build_daily_script(date, positions, events):
             score
         )
 
+        # IMPORTANT:
+        # Keep Hindi text outside the Python expression.
+        # This avoids the previous SyntaxError.
         lines.append(
-            f"{rashi राशि — {label}।"
+            "{} राशि - {}।".format(
+                rashi,
+                label
+            )
         )
 
         # Take the two strongest influences.
@@ -293,9 +303,10 @@ def build_daily_script(date, positions, events):
                 influence
             )
 
-            lines.append(
-                text
-            )
+            if text:
+                lines.append(
+                    text
+                )
 
     # --------------------------------------------------------
     # BEST RASHIS
@@ -311,7 +322,9 @@ def build_daily_script(date, positions, events):
 
         lines.append(
             "आज के गोचर में अपेक्षाकृत बेहतर संकेत "
-            f"{', '.join(best)} राशि के लिए दिखाई दे रहे हैं।"
+            "{} राशि के लिए दिखाई दे रहे हैं।".format(
+                ", ".join(best)
+            )
         )
 
     # --------------------------------------------------------
@@ -327,9 +340,10 @@ def build_daily_script(date, positions, events):
     if caution:
 
         lines.append(
-            "वहीं "
-            f"{', '.join(caution)} राशि वालों को "
-            "आज जल्दबाजी से बचते हुए निर्णय लेने की सलाह है।"
+            "वहीं {} राशि वालों को "
+            "आज जल्दबाजी से बचते हुए निर्णय लेने की सलाह है।".format(
+                ", ".join(caution)
+            )
         )
 
     # --------------------------------------------------------
