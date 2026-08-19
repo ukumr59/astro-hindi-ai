@@ -572,6 +572,87 @@ def _make_vishnu(path):
     _save_deity(img, path)
 
 
+
+def _make_surya(path):
+    img = _deity_canvas()
+    d = ImageDraw.Draw(img)
+    gold = (255, 205, 55, 255)
+    orange = (240, 110, 25, 255)
+    red = (170, 45, 25, 255)
+    skin = (205, 135, 85, 255)
+    white = (255, 248, 220, 255)
+
+    # Radiant solar halo.
+    _halo(d, 500, 390, 350)
+
+    # Sun rays.
+    for angle in range(0, 360, 20):
+        rad = math.radians(angle)
+        x1 = 500 + int(335 * math.cos(rad))
+        y1 = 390 + int(335 * math.sin(rad))
+        x2 = 500 + int(455 * math.cos(rad))
+        y2 = 390 + int(455 * math.sin(rad))
+        d.line((x1, y1, x2, y2), fill=gold, width=18)
+
+    # Crown.
+    d.polygon(
+        [(390,255),(430,105),(500,195),(570,105),(610,255)],
+        fill=gold,
+        outline=white,
+    )
+    d.ellipse(
+        (395,225,605,295),
+        fill=orange,
+        outline=white,
+        width=4,
+    )
+
+    # Face.
+    d.ellipse(
+        (350,275,650,570),
+        fill=skin,
+        outline=gold,
+        width=7,
+    )
+    d.ellipse((420,365,460,405), fill=red)
+    d.ellipse((540,365,580,405), fill=red)
+    d.arc((430,420,570,510), 5, 175, fill=white, width=8)
+
+    # Golden robes / torso.
+    d.ellipse(
+        (320,515,680,910),
+        fill=orange,
+        outline=gold,
+        width=8,
+    )
+
+    # Two raised arms.
+    d.line((390,590,190,370), fill=skin, width=34)
+    d.line((610,590,810,370), fill=skin, width=34)
+
+    # Solar discs in hands.
+    d.ellipse((135,315,245,425), fill=gold, outline=white, width=6)
+    d.ellipse((755,315,865,425), fill=gold, outline=white, width=6)
+
+    # Central sun emblem.
+    d.ellipse(
+        (430,610,570,750),
+        fill=gold,
+        outline=white,
+        width=5,
+    )
+    for angle in range(0, 360, 45):
+        rad = math.radians(angle)
+        x1 = 500 + int(78 * math.cos(rad))
+        y1 = 680 + int(78 * math.sin(rad))
+        x2 = 500 + int(120 * math.cos(rad))
+        y2 = 680 + int(120 * math.sin(rad))
+        d.line((x1,y1,x2,y2), fill=gold, width=7)
+
+    _draw_centered(d, "सूर्य देव", get_font(62), 900, gold)
+    _save_deity(img, path)
+
+
 def _make_shani(path):
     img = _deity_canvas()
     d = ImageDraw.Draw(img)
@@ -611,9 +692,10 @@ def _make_shani(path):
 
 DEITY_ARTISTS = {
     "हनुमान जी": _make_hanuman,
+    "महालक्ष्मी जी": _make_lakshmi,
     "श्री गणेश जी": _make_ganesha,
     "भगवान शिव": _make_shiva,
-    "महालक्ष्मी जी": _make_lakshmi,
+    "सूर्य देव": _make_surya,
     "भगवान विष्णु": _make_vishnu,
     "शनि देव": _make_shani,
 }
