@@ -1,5 +1,5 @@
 """
-Daily Astro Hindi Video Renderer - V10
+Daily Astro Hindi Video Renderer - V12
 
 Purpose:
 - Keep the existing generated astrology narration/script.
@@ -731,14 +731,14 @@ DEITY_SOURCES = {
         "credit": "The Metropolitan Museum of Art Open Access — Public Domain",
     },
     "भगवान विष्णु": {
-        "met_id": 38723,
-        "title": "Vishnu — The Metropolitan Museum of Art, 20.52.1",
+        "met_id": 39326,
+        "title": "Standing Vishnu — The Metropolitan Museum of Art, 62.265",
         "credit": "The Metropolitan Museum of Art Open Access — Public Domain",
     },
     "शनि देव": {
-        "met_id": 45617,
-        "title": "Iconographic Drawing of Saturn (Shanaishchara) — The Metropolitan Museum of Art, 1975.268.15",
-        "credit": "The Metropolitan Museum of Art Open Access — Public Domain",
+        "picryl_page": "https://picryl.com/media/shani-deva-fbf817",
+        "title": "Shani Deva — public-domain historical devotional image (PICRYL)",
+        "credit": "Public-domain image surfaced by PICRYL; source attribution retained in credits.",
     },
 }
 
@@ -759,6 +759,22 @@ def met_object_image(met_id):
     return image_url
 
 
+
+def picryl_image_url(page_url):
+    """Resolve the og:image from a public-domain PICRYL media page."""
+    raw = request_bytes(page_url, timeout=60)
+    html = raw.decode("utf-8", "ignore")
+    patterns = [
+        r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, html, flags=re.I)
+        if match:
+            return urllib.parse.urljoin(page_url, match.group(1))
+    raise RuntimeError("PICRYL page did not expose an og:image URL.")
+
+
 def download_deity(item_index, deity, query):
     destination = DEITIES / f"deity_{item_index:02d}.jpg"
     source = DEITY_SOURCES.get(deity)
@@ -770,6 +786,8 @@ def download_deity(item_index, deity, query):
     # paths that can become stale while keeping the source authoritative.
     if "met_id" in source:
         image_url = met_object_image(source["met_id"])
+    elif "picryl_page" in source:
+        image_url = picryl_image_url(source["picryl_page"])
     else:
         image_url = source["url"]
 
@@ -800,8 +818,22 @@ def download_deity(item_index, deity, query):
             raw = raw.convert("RGB")
             if raw.width < 300 or raw.height < 300:
                 raise RuntimeError(f"Deity image is too small: {raw.size}")
-            raw.thumbnail((1800, 1800), Image.Resampling.LANCZOS)
-            raw.save(destination, "JPEG", quality=95)
+            # HD QUALITY GATE:
+            # Keep the original high-resolution artwork whenever possible.
+            # If a source is smaller than the HD target, upscale it once so
+            # the final 1080x1920 render never uses a tiny source image.
+            min_long_edge = 2160
+            long_edge = max(raw.width, raw.height)
+            if long_edge < min_long_edge:
+                scale = min_long_edge / long_edge
+                new_size = (
+                    max(1, int(round(raw.width * scale))),
+                    max(1, int(round(raw.height * scale))),
+                )
+                raw = raw.resize(new_size, Image.Resampling.LANCZOS)
+
+            # Do not downsample HD source artwork.
+            raw.save(destination, "JPEG", quality=97, subsampling=0)
     except Exception as exc:
         raise RuntimeError(
             f"Downloaded deity artwork for {deity} is not a valid image: {exc}"
@@ -817,7 +849,7 @@ def prepare_deities():
         "REAL DEITY ARTWORK CREDITS",
         "===========================",
         "",
-        "Recognizable public-domain devotional artwork is used; no generated geometric/cartoon deity drawings are used.",
+        "All seven deity visuals are rendered in HD quality for the 1080x1920 video. Source artwork is preserved at native resolution when possible and upscaled only when necessary; no generated geometric/cartoon deity drawings are used.",
         "",
     ]
 
@@ -830,7 +862,16 @@ def prepare_deities():
     for number, (deity, query) in enumerate(unique.items(), start=1):
         path, title, source_url, credit = download_deity(number, deity, query)
         resolved[deity] = path
-        credits.extend([deity, title, credit, source_url, ""])
+        with Image.open(path) as verified:
+            width, height = verified.size
+        credits.extend([
+            deity,
+            title,
+            credit,
+            source_url,
+            f"Rendered artwork resolution: {width}x{height}",
+            ""]
+        )
 
     CREDITS.write_text("\n".join(credits), encoding="utf-8")
     return resolved
@@ -925,7 +966,6 @@ def create_scene(
     draw = ImageDraw.Draw(canvas)
 
     title_font = get_font(72)
-    deity_font = get_font(54)
     body_font = get_font(36)
     footer_font = get_font(28)
 
@@ -975,11 +1015,23 @@ def create_scene(
     hero_w = 900
     hero_h = 790
 
-    hero = crop_cover(
-        deity_img,
-        hero_w,
-        hero_h,
+    # Fit the complete deity artwork inside the hero area so the figure
+    # is not cropped at the head, hands, mount, halo, or feet.
+    hero = deity_img.copy()
+    hero.thumbnail(
+        (hero_w, hero_h),
+        Image.Resampling.LANCZOS,
     )
+
+    hero_canvas = Image.new(
+        "RGB",
+        (hero_w, hero_h),
+        (10, 7, 28),
+    )
+
+    hx = (hero_w - hero.width) // 2
+    hy = (hero_h - hero.height) // 2
+    hero_canvas.paste(hero, (hx, hy))
 
     x = (WIDTH - hero_w) // 2
     y = 250
@@ -998,7 +1050,7 @@ def create_scene(
     )
 
     canvas.paste(
-        hero,
+        hero_canvas,
         (x, y),
         mask,
     )
@@ -1015,29 +1067,13 @@ def create_scene(
         width=5,
     )
 
-    # Deity name.
-    deity_text = f"🙏 {deity} 🙏"
-
-    box = draw.textbbox(
-        (0, 0),
-        deity_text,
-        font=deity_font,
-    )
-
-    draw.text(
-        (
-            (WIDTH - (box[2] - box[0])) / 2,
-            1010,
-        ),
-        deity_text,
-        font=deity_font,
-        fill=(255, 242, 200),
-    )
+    # No deity name is printed below the artwork.
+    # The Rashi header above the image is the only title in the devotional panel.
 
     # Astrology panel.
     text_panel = (
         42,
-        1150,
+        1145,
         WIDTH - 42,
         1695,
     )
@@ -1646,7 +1682,7 @@ def main():
     print(f"CREDITS: {CREDITS}")
     print("Animation: slow zoom + drift + brightness")
     print("Transition: cross-fade")
-    print("Deity art: Wikimedia Commons real artwork")
+    print("Deity art: museum/public-domain HD artwork")
     print("========================================")
 
 
