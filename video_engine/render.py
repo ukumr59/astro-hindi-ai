@@ -1,5 +1,5 @@
 """
-Daily Astro Hindi Video Renderer - V4
+Daily Astro Hindi Video Renderer - V8
 
 Purpose:
 - Keep the existing generated astrology narration/script.
@@ -690,66 +690,101 @@ def _make_shani(path):
     _save_deity(img, path)
 
 
-DEITY_ARTISTS = {
-    "हनुमान जी": _make_hanuman,
-    "महालक्ष्मी जी": _make_lakshmi,
-    "श्री गणेश जी": _make_ganesha,
-    "भगवान शिव": _make_shiva,
-    "सूर्य देव": _make_surya,
-    "भगवान विष्णु": _make_vishnu,
-    "शनि देव": _make_shani,
+# ============================================================
+# REAL DEITY ARTWORK SOURCES
+# ============================================================
+
+# Actual recognizable devotional sculptures/paintings. No generated
+# geometric/cartoon deity drawings are used.
+DEITY_SOURCES = {
+    "हनुमान जी": {
+        "url": "https://collections.lacma.org/sites/default/files/remote_images/piction/ma-31974974-O3.jpg",
+        "title": "Hanuman, The Divine Monkey — LACMA M.91.181",
+        "credit": "Los Angeles County Museum of Art — public-domain image",
+    },
+    "महालक्ष्मी जी": {
+        "url": "https://collections.lacma.org/sites/default/files/remote_images/piction/ma-2794266-O3.jpg",
+        "title": "The Hindu Goddess Shri Lakshmi — LACMA M.87.210",
+        "credit": "Los Angeles County Museum of Art — public-domain image",
+    },
+    "श्री गणेश जी": {
+        "url": "https://collections.lacma.org/sites/default/files/remote_images/piction/ma-31961122-O3.jpg",
+        "title": "Ganesha, Lord of Obstacles — LACMA AC1993.239.8",
+        "credit": "Los Angeles County Museum of Art — public-domain image",
+    },
+    "भगवान शिव": {
+        "url": "https://collections.lacma.org/sites/default/files/remote_images/piction/ma-34004515-O3.jpg",
+        "title": "The Hindu God Shiva — LACMA M.79.189.1",
+        "credit": "Los Angeles County Museum of Art — public-domain image",
+    },
+    "सूर्य देव": {
+        "url": "https://collections.lacma.org/sites/default/files/remote_images/piction/ma-34367936-O3.jpg",
+        "title": "Surya, The Sun God — LACMA M.86.94.1",
+        "credit": "Los Angeles County Museum of Art — public-domain image",
+    },
+    "भगवान विष्णु": {
+        "url": "https://collections.lacma.org/sites/default/files/remote_images/piction/ma-31955746-O3.jpg",
+        "title": "The Hindu God Vishnu — LACMA AC1999.263.1",
+        "credit": "Los Angeles County Museum of Art — public-domain image",
+    },
+    "शनि देव": {
+        "url": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Shani_Deva.jpg",
+        "title": "Shani Deva — Raja Ravi Varma artwork",
+        "credit": "Wikimedia Commons — public-domain artwork",
+    },
 }
 
 
 def download_deity(item_index, deity, query):
-    """
-    No external image download is used.
-
-    Previous versions depended on Wikimedia Commons and failed in GitHub
-    Actions with HTTP 429 rate limits. This renderer creates six original,
-    deity-specific devotional illustrations locally. Therefore the workflow
-    has no network dependency and cannot fail because of an image CDN.
-    """
     destination = DEITIES / f"deity_{item_index:02d}.jpg"
+    source = DEITY_SOURCES.get(deity)
 
-    artist = DEITY_ARTISTS.get(deity)
+    if source is None:
+        raise RuntimeError(f"No real deity artwork source exists for {deity}.")
 
-    if artist is None:
-        raise RuntimeError(
-            f"No devotional artwork definition exists for {deity}."
-        )
-
-    print(
-        f"Creating devotional deity artwork locally: {deity}"
-    )
-
-    artist(destination)
-
-    with Image.open(destination) as img:
-        if img.width < 700 or img.height < 700:
+    if not destination.exists() or destination.stat().st_size < 10000:
+        print(f"Downloading real deity artwork: {deity}")
+        last_error = None
+        for attempt, wait_seconds in enumerate((0, 8, 20, 45), start=1):
+            if wait_seconds:
+                time.sleep(wait_seconds)
+            try:
+                data = request_bytes(source["url"], timeout=90)
+                if not data or len(data) < 10000:
+                    raise RuntimeError("Downloaded response is too small to be an image.")
+                destination.write_bytes(data)
+                break
+            except Exception as exc:
+                last_error = exc
+                print(f"Deity download attempt {attempt} failed for {deity}: {exc}")
+        else:
             raise RuntimeError(
-                f"Generated deity artwork is too small for {deity}."
+                f"Could not download the real deity image for {deity}. Last error: {last_error}"
             )
 
-    return (
-        destination,
-        f"Original devotional illustration - {deity}",
-        "Generated locally by the renderer; no external download",
-    )
+    try:
+        with Image.open(destination) as raw:
+            raw = raw.convert("RGB")
+            if raw.width < 300 or raw.height < 300:
+                raise RuntimeError(f"Deity image is too small: {raw.size}")
+            raw.thumbnail((1800, 1800), Image.Resampling.LANCZOS)
+            raw.save(destination, "JPEG", quality=95)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Downloaded deity artwork for {deity} is not a valid image: {exc}"
+        )
+
+    return destination, source["title"], source["url"], source["credit"]
 
 
 def prepare_deities():
-    DEITIES.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+    DEITIES.mkdir(parents=True, exist_ok=True)
 
     credits = [
-        "DEVOTIONAL DEITY ARTWORK",
-        "========================",
+        "REAL DEITY ARTWORK CREDITS",
+        "===========================",
         "",
-        "Artwork is generated locally by the video renderer.",
-        "No external image server is required.",
+        "Recognizable real devotional artwork is used; no generated geometric/cartoon deity drawings are used.",
         "",
     ]
 
@@ -759,30 +794,12 @@ def prepare_deities():
     for _, _, deity, query in RASHIS:
         unique[deity] = query
 
-    for number, (deity, query) in enumerate(
-        unique.items(),
-        start=1,
-    ):
-        path, title, source_url = download_deity(
-            number,
-            deity,
-            query,
-        )
-
+    for number, (deity, query) in enumerate(unique.items(), start=1):
+        path, title, source_url, credit = download_deity(number, deity, query)
         resolved[deity] = path
+        credits.extend([deity, title, credit, source_url, ""])
 
-        credits.extend([
-            deity,
-            title,
-            source_url,
-            "",
-        ])
-
-    CREDITS.write_text(
-        "\n".join(credits),
-        encoding="utf-8",
-    )
-
+    CREDITS.write_text("\n".join(credits), encoding="utf-8")
     return resolved
 
 
@@ -1507,7 +1524,7 @@ def main():
     print("Loaded daily_script.md")
 
     # --------------------------------------------------------
-    # REAL DEITY IMAGE DOWNLOAD
+    # REAL DEITY ARTWORK
     # --------------------------------------------------------
 
     deity_paths = prepare_deities()
