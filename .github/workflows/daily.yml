@@ -2,15 +2,15 @@ name: Daily Astro Hindi Video
 
 on:
   schedule:
-    # Runs every day at 8:00 AM India time (IST)
+    # 8:00 AM India time (IST)
     - cron: "30 2 * * *"
-
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+
   generate:
 
     runs-on: ubuntu-latest
@@ -25,55 +25,52 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-noto-core fonts-noto-extra
+
       - name: Install Python dependencies
         run: |
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Generate daily Hindi astrology content
         run: |
           python -m astro_engine.main
 
-      - name: Prepare video
+      - name: Generate Hindi video
         run: |
           python -m video_engine.render
 
       - name: Check generated files
         run: |
-          echo "======================================"
-          echo "GENERATED FILES"
-          echo "======================================"
+          echo "===== OUTPUT FILES ====="
+          ls -lah output
+          echo "========================"
 
-          if [ -d output ]; then
-            find output -maxdepth 2 -type f -print
-          else
-            echo "WARNING: output directory not found"
-          fi
+          test -f output/daily_script.md
+          test -f output/daily_voice.mp3
+          test -f output/daily_video.mp4
 
-      - name: Upload generated astrology content
+      - name: Upload generated files
         uses: actions/upload-artifact@v4
         with:
           name: daily-astro-output
           path: |
-            output/planetary_report.txt
             output/daily_script.md
-          if-no-files-found: error
-
-      - name: Upload generated video
-        uses: actions/upload-artifact@v4
-        with:
-          name: daily-astro-video
-          path: |
-            output/*.mp4
-            output/*.webm
-            output/*.mov
-          if-no-files-found: ignore
+            output/planetary_report.txt
+            output/daily_voice.mp3
+            output/daily_subtitles.ass
+            output/daily_video.mp4
+          retention-days: 7
 
       - name: YouTube publishing
         if: ${{ vars.YOUTUBE_ENABLED == 'true' }}
         run: |
-          echo "YouTube publishing module will be activated in the production phase."
+          echo "YouTube publishing will be activated after API credentials are configured."
 
       - name: Facebook publishing
         if: ${{ vars.FACEBOOK_ENABLED == 'true' }}
         run: |
-          echo "Facebook publishing module will be activated in the production phase."
+          echo "Facebook publishing will be activated after API credentials are configured."
