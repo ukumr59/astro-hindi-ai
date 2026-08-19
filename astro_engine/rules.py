@@ -1,6 +1,20 @@
 """
 Vedic Jyotisha Gochar Rules Engine
+
+System:
+    Nirayana / Sidereal zodiac
+    Lahiri ayanamsha
+    Chandra Rashi based Gochar
+
+Purpose:
+    Calculate classical transit houses and generate
+    structured Hindi interpretations for the daily
+    Chandra-Rashi horoscope.
 """
+
+# ============================================================
+# HINDI NAMES
+# ============================================================
 
 PLANET_HI = {
     "Sun": "सूर्य",
@@ -13,6 +27,7 @@ PLANET_HI = {
     "Rahu": "राहु",
     "Ketu": "केतु",
 }
+
 
 SIGN_HI = [
     "मेष",
@@ -29,6 +44,11 @@ SIGN_HI = [
     "मीन",
 ]
 
+
+# ============================================================
+# CLASSICAL GOCHARA HOUSE GROUPS
+# ============================================================
+
 FAVOURABLE_HOUSES = {
     "Sun": {3, 6, 10, 11},
     "Moon": {1, 3, 6, 7, 10, 11},
@@ -40,6 +60,7 @@ FAVOURABLE_HOUSES = {
     "Rahu": {3, 6, 10, 11},
     "Ketu": {3, 6, 10, 11},
 }
+
 
 CHALLENGING_HOUSES = {
     "Sun": {1, 2, 4, 5, 7, 8, 9, 12},
@@ -53,6 +74,11 @@ CHALLENGING_HOUSES = {
     "Ketu": {1, 2, 4, 5, 7, 8, 9, 12},
 }
 
+
+# ============================================================
+# GRAHA DRISHTI
+# ============================================================
+
 SPECIAL_ASPECTS = {
     "Sun": {7},
     "Moon": {7},
@@ -64,6 +90,11 @@ SPECIAL_ASPECTS = {
     "Rahu": {7},
     "Ketu": {7},
 }
+
+
+# ============================================================
+# HOUSE THEMES
+# ============================================================
 
 HOUSE_THEMES = {
     1: "स्वास्थ्य, व्यक्तित्व और आत्मविश्वास",
@@ -80,17 +111,27 @@ HOUSE_THEMES = {
     12: "व्यय, विदेश, एकांत और आध्यात्मिक चिंतन",
 }
 
+
+# ============================================================
+# PLANET THEMES
+# ============================================================
+
 PLANET_THEMES = {
     "Sun": "आत्मविश्वास, नेतृत्व और अधिकार",
     "Moon": "मन, भावनाएं और मानसिक शांति",
     "Mars": "ऊर्जा, साहस और प्रतिस्पर्धा",
     "Mercury": "बुद्धि, संचार, व्यापार और निर्णय",
-    "Jupiter": "ज्ञान, विस्तार, गुरु, संतान और अवसर",
+    "Jupiter": "ज्ञान, विस्तार, गुरु और अवसर",
     "Venus": "प्रेम, विवाह, सुख-सुविधा और कला",
     "Saturn": "कर्म, अनुशासन, जिम्मेदारी और मेहनत",
     "Rahu": "महत्वाकांक्षा, तकनीक और विदेशी संपर्क",
     "Ketu": "वैराग्य, शोध और आध्यात्मिकता",
 }
+
+
+# ============================================================
+# HOUSE NAMES
+# ============================================================
 
 HOUSE_ORDINAL_HI = {
     1: "पहले",
@@ -109,51 +150,155 @@ HOUSE_ORDINAL_HI = {
 
 
 def house_text(house):
-    return HOUSE_ORDINAL_HI.get(house, str(house))
+    return HOUSE_ORDINAL_HI.get(
+        house,
+        str(house)
+    )
 
 
-def relative_house(transit_sign_index, rashi_index):
-    return ((transit_sign_index - rashi_index) % 12) + 1
+# ============================================================
+# HOUSE FROM CHANDRA RASHI
+# ============================================================
 
+def relative_house(
+    transit_sign_index,
+    rashi_index
+):
+    return (
+        (transit_sign_index - rashi_index) % 12
+    ) + 1
+
+
+# ============================================================
+# DRISHTI
+# ============================================================
 
 def aspect_houses(planet):
-    return SPECIAL_ASPECTS.get(planet, {7})
+
+    return SPECIAL_ASPECTS.get(
+        planet,
+        {7}
+    )
 
 
-def get_aspected_houses(planet, transit_house):
+def get_aspected_houses(
+    planet,
+    transit_house
+):
+
     result = []
 
-    for aspect in aspect_houses(planet):
-        target = ((transit_house - 1 + aspect - 1) % 12) + 1
-        result.append(target)
+    for aspect in aspect_houses(
+        planet
+    ):
 
-    return sorted(set(result))
+        target = (
+            (
+                transit_house
+                - 1
+                + aspect
+                - 1
+            ) % 12
+        ) + 1
+
+        result.append(
+            target
+        )
+
+    return sorted(
+        set(result)
+    )
 
 
 def aspect_names(planet):
+
     if planet == "Mars":
-        return "मंगल की 4वीं, 7वीं और 8वीं दृष्टि"
+        return (
+            "मंगल की 4वीं, 7वीं और 8वीं दृष्टि"
+        )
 
     if planet == "Jupiter":
-        return "गुरु की 5वीं, 7वीं और 9वीं दृष्टि"
+        return (
+            "गुरु की 5वीं, 7वीं और 9वीं दृष्टि"
+        )
 
     if planet == "Saturn":
-        return "शनि की 3वीं, 7वीं और 10वीं दृष्टि"
+        return (
+            "शनि की 3वीं, 7वीं और 10वीं दृष्टि"
+        )
 
     return "ग्रह की 7वीं दृष्टि"
 
 
-def transit_quality(planet, house):
-    if house in FAVOURABLE_HOUSES.get(planet, set()):
-        if planet in {"Saturn", "Jupiter", "Mars", "Sun"}:
+# ============================================================
+# PLANETARY TRANSIT QUALITY
+# ============================================================
+
+def transit_quality(
+    planet,
+    house
+):
+    """
+    Classical general Gochar quality.
+
+    +2 = strongly favourable
+    +1 = favourable
+     0 = neutral
+    -1 = challenging
+    """
+
+    if house in FAVOURABLE_HOUSES.get(
+        planet,
+        set()
+    ):
+
+        # Strong classical transit positions.
+        if planet == "Saturn" and house in {
+            3,
+            6,
+            11,
+        }:
             return 2
+
+        if planet == "Jupiter" and house in {
+            2,
+            5,
+            7,
+            9,
+            11,
+        }:
+            return 2
+
+        if planet == "Mars" and house in {
+            3,
+            6,
+            10,
+            11,
+        }:
+            return 2
+
+        if planet == "Sun" and house in {
+            3,
+            6,
+            10,
+            11,
+        }:
+            return 2
+
         return 1
 
-    if house in CHALLENGING_HOUSES.get(planet, set()):
+    if house in CHALLENGING_HOUSES.get(
+        planet,
+        set()
+    ):
         return -1
 
     return 0
 
+
+# ============================================================
+# SCORE MODIFIER
+# ============================================================
 
 def transit_score(
     planet,
@@ -161,6 +306,7 @@ def transit_score(
     rashi_index,
     retrograde=False
 ):
+
     house = relative_house(
         transit_sign_index,
         rashi_index
@@ -171,19 +317,40 @@ def transit_score(
         house
     )
 
+    # Retrograde modifies confidence/strength,
+    # but does not completely reverse classical Gochar.
     if (
         retrograde
-        and planet not in {"Rahu", "Ketu"}
+        and planet not in {
+            "Rahu",
+            "Ketu",
+        }
     ):
+
         if score > 0:
             score -= 1
+
         elif score < 0:
             score -= 1
 
-    return max(-3, min(3, score))
+    return max(
+        -2,
+        min(
+            2,
+            score
+        )
+    )
 
 
-def retrograde_modifier(planet, retrograde):
+# ============================================================
+# RETROGRADE INTERPRETATION
+# ============================================================
+
+def retrograde_modifier(
+    planet,
+    retrograde
+):
+
     if not retrograde:
         return ""
 
@@ -201,8 +368,8 @@ def retrograde_modifier(planet, retrograde):
 
     if planet == "Mercury":
         return (
-            "वक्री बुध में संचार, दस्तावेज और "
-            "निर्णयों को दोबारा जांचना उपयोगी रहेगा।"
+            "वक्री बुध में संचार और दस्तावेजों "
+            "को दोबारा जांचना उपयोगी रहेगा।"
         )
 
     if planet == "Venus":
@@ -220,48 +387,9 @@ def retrograde_modifier(planet, retrograde):
     return ""
 
 
-def positive_sentence(
-    planet,
-    house,
-    sign_name
-):
-    name = PLANET_HI.get(planet, planet)
-    theme = PLANET_THEMES.get(
-        planet,
-        "ग्रह संबंधी विषय"
-    )
-    house_theme = HOUSE_THEMES.get(
-        house,
-        "जीवन के महत्वपूर्ण विषय"
-    )
-
-    return (
-        f"{name} {sign_name} राशि में "
-        f"{house_text(house)} भाव में गोचर कर रहा है। "
-        f"इससे {house_theme} से जुड़े मामलों में "
-        f"{theme} को सकारात्मक दिशा मिल सकती है।"
-    )
-
-
-def negative_sentence(
-    planet,
-    house,
-    sign_name
-):
-    name = PLANET_HI.get(planet, planet)
-
-    house_theme = HOUSE_THEMES.get(
-        house,
-        "जीवन के महत्वपूर्ण विषय"
-    )
-
-    return (
-        f"{name} {sign_name} राशि में "
-        f"{house_text(house)} भाव में गोचर कर रहा है। "
-        f"{house_theme} से जुड़े मामलों में "
-        f"धैर्य और संतुलन बनाए रखना जरूरी रहेगा।"
-    )
-
+# ============================================================
+# PLANET INTERPRETATION
+# ============================================================
 
 def interpret_for_rashi(
     planet,
@@ -269,6 +397,7 @@ def interpret_for_rashi(
     rashi_index,
     retrograde=False
 ):
+
     house = relative_house(
         transit_sign_index,
         rashi_index
@@ -278,72 +407,177 @@ def interpret_for_rashi(
         transit_sign_index
     ]
 
+    name = PLANET_HI.get(
+        planet,
+        planet
+    )
+
+    house_theme = HOUSE_THEMES.get(
+        house,
+        "जीवन के महत्वपूर्ण विषय"
+    )
+
+    theme = PLANET_THEMES.get(
+        planet,
+        "ग्रह संबंधी विषय"
+    )
+
     quality = transit_quality(
         planet,
         house
     )
 
-    if quality > 0:
-        sentence = positive_sentence(
-            planet,
-            house,
-            sign_name
+    if quality >= 1:
+
+        text = (
+            f"{name} {sign_name} राशि में "
+            f"{house_text(house)} भाव में गोचर कर रहा है। "
+            f"इससे {house_theme} से जुड़े मामलों में "
+            f"{theme} को सकारात्मक दिशा मिल सकती है।"
         )
 
-    elif quality < 0:
-        sentence = negative_sentence(
-            planet,
-            house,
-            sign_name
+    elif quality <= -1:
+
+        text = (
+            f"{name} {sign_name} राशि में "
+            f"{house_text(house)} भाव में गोचर कर रहा है। "
+            f"{house_theme} से जुड़े मामलों में "
+            f"धैर्य और संतुलन बनाए रखना जरूरी रहेगा।"
         )
 
     else:
-        name = PLANET_HI.get(
-            planet,
-            planet
-        )
 
-        sentence = (
+        text = (
             f"{name} {sign_name} राशि में "
             f"{house_text(house)} भाव में गोचर कर रहा है। "
-            f"इसका प्रभाव "
-            f"{HOUSE_THEMES.get(house, 'जीवन के महत्वपूर्ण विषय')} "
-            f"से जुड़े मामलों पर दिखाई दे सकता है।"
+            f"इसका प्रभाव {house_theme} से जुड़े "
+            f"मामलों पर दिखाई दे सकता है।"
         )
 
-    if planet in {"Mars", "Jupiter", "Saturn"}:
+    # Special Drishti.
+    if planet in {
+        "Mars",
+        "Jupiter",
+        "Saturn",
+    }:
+
         targets = get_aspected_houses(
             planet,
             house
         )
 
         target_text = ", ".join(
-            house_text(h)
-            for h in targets
+            house_text(
+                target
+            )
+            for target in targets
         )
 
-        sentence += (
+        text += (
             f" {aspect_names(planet)} "
             f"{target_text} भावों को भी प्रभावित करती है।"
         )
 
-    retro = retrograde_modifier(
+    retro_text = retrograde_modifier(
         planet,
         retrograde
     )
 
-    if retro:
-        sentence += " " + retro
+    if retro_text:
+        text += " " + retro_text
 
-    return sentence
+    return text
 
+
+# ============================================================
+# OVERALL RASHI SCORE
+# ============================================================
+
+def calculate_rashi_score(
+    influences
+):
+    """
+    Calculate overall Chandra-Rashi score.
+
+    Slow planets receive greater weight because their
+    Gochar influence persists longer.
+
+    Jupiter / Saturn / Rahu / Ketu:
+        weight 2.0
+
+    Mars:
+        weight 1.5
+
+    Sun / Venus / Mercury:
+        weight 1.0
+
+    Moon:
+        weight 0.5
+    """
+
+    weights = {
+        "Jupiter": 2.0,
+        "Saturn": 2.0,
+        "Rahu": 2.0,
+        "Ketu": 2.0,
+        "Mars": 1.5,
+        "Sun": 1.0,
+        "Venus": 1.0,
+        "Mercury": 1.0,
+        "Moon": 0.5,
+    }
+
+    total = 0.0
+
+    for item in influences:
+
+        planet = item.get(
+            "planet"
+        )
+
+        score = item.get(
+            "score",
+            0
+        )
+
+        weight = weights.get(
+            planet,
+            1.0
+        )
+
+        total += (
+            score * weight
+        )
+
+    return round(
+        total,
+        2
+    )
+
+
+def overall_label(
+    score
+):
+
+    if score >= 5:
+        return "अनुकूल"
+
+    if score <= -5:
+        return "सावधानी"
+
+    return "मिश्रित"
+
+
+# ============================================================
+# RASHI SUMMARY
+# ============================================================
 
 def rashi_summary(
     rashi_index,
     positions
 ):
+
     influences = []
-    total_score = 0
 
     for position in positions:
 
@@ -371,28 +605,31 @@ def rashi_summary(
             "score": score,
             "house": house,
             "text": text,
+            "retrograde": position.retrograde,
         })
 
-        total_score += score
-
+    # Strongest influences first.
     influences.sort(
         key=lambda item: (
-            abs(item["score"]),
+            abs(
+                item["score"]
+            ),
             item["score"]
         ),
         reverse=True
     )
 
-    if total_score >= 5:
-        overall = "अनुकूल"
-    elif total_score <= -5:
-        overall = "सावधानी"
-    else:
-        overall = "मिश्रित"
+    total_score = calculate_rashi_score(
+        influences
+    )
 
     return {
-        "rashi": SIGN_HI[rashi_index],
+        "rashi": SIGN_HI[
+            rashi_index
+        ],
         "score": total_score,
-        "overall": overall,
+        "overall": overall_label(
+            total_score
+        ),
         "influences": influences,
     }
