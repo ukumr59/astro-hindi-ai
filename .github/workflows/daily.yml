@@ -1,0 +1,47 @@
+name: Daily Astro Hindi Video
+
+on:
+  schedule:
+    # Runs every day at 8:00 AM India time (IST)
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate daily Hindi astrology content
+        run: python -m astro_engine.main
+
+      - name: Prepare video
+        run: python -m video_engine.render
+
+      - name: Check generated files
+        run: |
+          echo "Daily automation completed."
+          ls -la output || true
+
+      # YouTube publishing will be connected in a later phase.
+      - name: YouTube publishing
+        if: ${{ vars.YOUTUBE_ENABLED == 'true' }}
+        run: echo "YouTube publishing module will be activated in the production phase."
+
+      # Facebook publishing will be connected in a later phase.
+      - name: Facebook publishing
+        if: ${{ vars.FACEBOOK_ENABLED == 'true' }}
+        run: echo "Facebook publishing module will be activated in the production phase."
