@@ -22,13 +22,13 @@ SIGN_HI = [
 
 
 PLANETS = {
-    "Sun": "sun",
-    "Moon": "moon",
-    "Mercury": "mercury",
-    "Venus": "venus",
-    "Mars": "mars",
-    "Jupiter": "jupiter",
-    "Saturn": "saturn",
+    "Sun": "SUN",
+    "Moon": "MOON",
+    "Mercury": "MERCURY",
+    "Venus": "VENUS",
+    "Mars": "MARS BARYCENTER",
+    "Jupiter": "JUPITER BARYCENTER",
+    "Saturn": "SATURN BARYCENTER",
 }
 
 
