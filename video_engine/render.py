@@ -1,1102 +1,520 @@
 """
-Daily Vedic Astrology Video Renderer
-------------------------------------
-Complete replacement for video_engine/render.py.
-
-Keeps the existing astrology/content pipeline independent and focuses on
-rendering a prominent devotional deity visual for every Rashi scene.
-
-Output:
-    output/daily_video.mp4
-    output/daily_voice.mp3
-    output/deity_credits.txt
+Daily Astro Hindi Video Renderer
+- Prominent real deity artwork
+- Animated deity entrance / slow zoom / glow
+- Animated Rashi transition cards
+- Hindi text panels
+- 1080x1920 vertical MP4
 """
 
 from pathlib import Path
 import asyncio
 import subprocess
 import textwrap
+import urllib.parse
 import urllib.request
+import json
 import time
 import re
+import shutil
 
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 import edge_tts
 import imageio_ffmpeg
 
 
-# ============================================================
-# PATHS / VIDEO
-# ============================================================
+OUT = Path("output")
+SCENES = OUT / "video_scenes"
+DEITIES = OUT / "deity_images"
+SCRIPT = OUT / "daily_script.md"
+VOICE = OUT / "daily_voice.mp3"
+VIDEO = OUT / "daily_video.mp4"
+CREDITS = OUT / "deity_credits.txt"
 
-OUTPUT = Path("output")
-SCENES = OUTPUT / "video_scenes"
-DEITIES = OUTPUT / "deity_images"
-
-SCRIPT = OUTPUT / "daily_script.md"
-VOICE = OUTPUT / "daily_voice.mp3"
-VIDEO = OUTPUT / "daily_video.mp4"
-CREDITS = OUTPUT / "deity_credits.txt"
-
-WIDTH = 1080
-HEIGHT = 1920
+W, H = 1080, 1920
 FPS = 30
 VOICE_NAME = "hi-IN-SwaraNeural"
 
-FONT_URL = (
-    "https://github.com/googlefonts/"
-    "noto-fonts/raw/main/hinted/ttf/"
-    "NotoSansDevanagari/"
-    "NotoSansDevanagari-Regular.ttf"
-)
-FONT_PATH = OUTPUT / "NotoSansDevanagari-Regular.ttf"
+FONT = OUT / "NotoSansDevanagari-Regular.ttf"
+FONT_URL = "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSansDevanagari/NotoSansDevanagari-Regular.ttf"
 
-
-# ============================================================
-# RASHI -> DEVOTIONAL ASSOCIATION
-#
-# Direct upload.wikimedia.org URLs are used.
-# If any external image fails, the video continues with a
-# locally generated devotional fallback rather than failing.
-# ============================================================
+# Wikimedia Commons files. The renderer resolves them through the Commons
+# API / Special:Redirect instead of hard-coding upload.wikimedia.org URLs.
+DEITY_DATA = {
+    "हनुमान जी": {
+        "file": "Hanuman Ji.jpg",
+        "credit": "https://commons.wikimedia.org/wiki/File:Hanuman_Ji.jpg",
+        "license": "CC BY-SA 4.0",
+    },
+    "महालक्ष्मी जी": {
+        "file": "Goddess Lakshmi Mata.jpg",
+        "credit": "https://commons.wikimedia.org/wiki/File:Goddess_Lakshmi_Mata.jpg",
+        "license": "CC BY-SA 4.0",
+    },
+    "श्री गणेश जी": {
+        "file": "Lord Ganesh ji.jpg",
+        "credit": "https://commons.wikimedia.org/wiki/File:Lord_Ganesh_ji.jpg",
+        "license": "CC BY-SA 4.0",
+    },
+    "भगवान शिव": {
+        "file": "Lord Shiva.jpg",
+        "credit": "https://commons.wikimedia.org/wiki/File:Lord_Shiva.jpg",
+        "license": "Wikimedia Commons - see source",
+    },
+    "सूर्य देव": {
+        "file": "Surya Deva.png",
+        "credit": "https://commons.wikimedia.org/wiki/File:Surya_Deva.png",
+        "license": "CC BY-SA 4.0",
+    },
+    "भगवान विष्णु": {
+        "file": "Vishnu.jpg",
+        "credit": "https://commons.wikimedia.org/wiki/File:Vishnu.jpg",
+        "license": "Public domain work / Commons source",
+    },
+    "शनि देव": {
+        "file": "Shani Dev.jpg",
+        "credit": "https://commons.wikimedia.org/wiki/File:Shani_Dev.jpg",
+        "license": "CC BY-SA 4.0",
+    },
+}
 
 RASHIS = [
-    {
-        "name": "मेष",
-        "emoji": "♈",
-        "deity": "हनुमान जी",
-        "image": "hanuman.jpg",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/b/b4/Hanuman%201.jpg",
-        "source": "https://commons.wikimedia.org/wiki/File:Hanuman_1.jpg",
-        "license": "CC BY-SA 4.0",
-    },
-    {
-        "name": "वृषभ",
-        "emoji": "♉",
-        "deity": "महालक्ष्मी जी",
-        "image": "lakshmi.jpg",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/d/dd/Shreelaxmi.jpg",
-        "source": "https://commons.wikimedia.org/wiki/File:Shreelaxmi.jpg",
-        "license": "Wikimedia Commons - see source",
-    },
-    {
-        "name": "मिथुन",
-        "emoji": "♊",
-        "deity": "श्री गणेश जी",
-        "image": "ganesh.jpg",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/9/93/Ganesh%20with%20Garland.jpg",
-        "source": "https://commons.wikimedia.org/wiki/File:Ganesh_with_Garland.jpg",
-        "license": "Wikimedia Commons - see source",
-    },
-    {
-        "name": "कर्क",
-        "emoji": "♋",
-        "deity": "भगवान शिव",
-        "image": "shiva.jpg",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/5/59/Shiv%207.jpg",
-        "source": "https://commons.wikimedia.org/wiki/File:Shiv_7.jpg",
-        "license": "Wikimedia Commons - see source",
-    },
-    {
-        "name": "सिंह",
-        "emoji": "♌",
-        "deity": "सूर्य देव",
-        "image": "surya.webp",
-        "url": (
-            "https://upload.wikimedia.org/wikipedia/commons/f/f6/"
-            "%E0%A4%B8%E0%A5%82%E0%A4%B0%E0%A5%8D%E0%A4%AF"
-            "%20%E0%A4%A6%E0%A5%87%E0%A4%B5"
-            "%20%E0%A4%AE%E0%A5%82%E0%A4%B0%E0%A5%8D%E0%A4%A4%E0%A4%BF"
-            "%20%28Sun%20God%20Idol%29.webp"
-        ),
-        "source": (
-            "https://commons.wikimedia.org/wiki/"
-            "File:%E0%A4%B8%E0%A5%82%E0%A4%B0%E0%A5%8D%E0%A4%AF"
-            "_%E0%A4%A6%E0%A5%87%E0%A4%B5_%E0%A4%AE%E0%A5%82%E0%A4%B0%E0%A5%8D%E0%A4%A4%E0%A4%BF"
-            "_(Sun_God_Idol).webp"
-        ),
-        "license": "Wikimedia Commons - see source",
-    },
-    {
-        "name": "कन्या",
-        "emoji": "♍",
-        "deity": "श्री गणेश जी",
-        "image": "ganesh.jpg",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/9/93/Ganesh%20with%20Garland.jpg",
-        "source": "https://commons.wikimedia.org/wiki/File:Ganesh_with_Garland.jpg",
-        "license": "Wikimedia Commons - see source",
-    },
-    {
-        "name": "तुला",
-        "emoji": "♎",
-        "deity": "महालक्ष्मी जी",
-        "image": "lakshmi.jpg",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/d/dd/Shreelaxmi.jpg",
-        "source": "https://commons.wikimedia.org/wiki/File:Shreelaxmi.jpg",
-        "license": "Wikimedia Commons - see source",
-    },
-    {
-        "name": "वृश्चिक",
-        "emoji": "♏",
-        "deity": "हनुमान जी",
-        "image": "hanuman.jpg",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/b/b4/Hanuman%201.jpg",
-        "source": "https://commons.wikimedia.org/wiki/File:Hanuman_1.jpg",
-        "license": "CC BY-SA 4.0",
-    },
-    {
-        "name": "धनु",
-        "emoji": "♐",
-        "deity": "भगवान विष्णु",
-        "image": "vishnu.jpg",
-        "url": (
-            "https://upload.wikimedia.org/wikipedia/commons/e/e7/"
-            "Hand-drawn%20image%20of%20Vishnu%2C%20Mogao%20Caves.jpg"
-        ),
-        "source": (
-            "https://commons.wikimedia.org/wiki/"
-            "File:Hand-drawn_image_of_Vishnu,_Mogao_Caves.jpg"
-        ),
-        "license": "CC0",
-    },
-    {
-        "name": "मकर",
-        "emoji": "♑",
-        "deity": "शनि देव",
-        "image": "shani.jpg",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/4/4a/Shani.jpg",
-        "source": "https://commons.wikimedia.org/wiki/File:Shani.jpg",
-        "license": "Public Domain",
-    },
-    {
-        "name": "कुंभ",
-        "emoji": "♒",
-        "deity": "शनि देव",
-        "image": "shani.jpg",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/4/4a/Shani.jpg",
-        "source": "https://commons.wikimedia.org/wiki/File:Shani.jpg",
-        "license": "Public Domain",
-    },
-    {
-        "name": "मीन",
-        "emoji": "♓",
-        "deity": "भगवान विष्णु",
-        "image": "vishnu.jpg",
-        "url": (
-            "https://upload.wikimedia.org/wikipedia/commons/e/e7/"
-            "Hand-drawn%20image%20of%20Vishnu%2C%20Mogao%20Caves.jpg"
-        ),
-        "source": (
-            "https://commons.wikimedia.org/wiki/"
-            "File:Hand-drawn_image_of_Vishnu,_Mogao_Caves.jpg"
-        ),
-        "license": "CC0",
-    },
+    ("मेष", "♈", "हनुमान जी"),
+    ("वृषभ", "♉", "महालक्ष्मी जी"),
+    ("मिथुन", "♊", "श्री गणेश जी"),
+    ("कर्क", "♋", "भगवान शिव"),
+    ("सिंह", "♌", "सूर्य देव"),
+    ("कन्या", "♍", "श्री गणेश जी"),
+    ("तुला", "♎", "महालक्ष्मी जी"),
+    ("वृश्चिक", "♏", "हनुमान जी"),
+    ("धनु", "♐", "भगवान विष्णु"),
+    ("मकर", "♑", "शनि देव"),
+    ("कुंभ", "♒", "शनि देव"),
+    ("मीन", "♓", "भगवान विष्णु"),
 ]
 
 
-# ============================================================
-# BASIC HELPERS
-# ============================================================
-
-def run(command, timeout=600):
-    print("RUN:", " ".join(str(x) for x in command))
-    result = subprocess.run(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        timeout=timeout,
-    )
-    print(result.stdout)
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"Command failed with exit code {result.returncode}"
-        )
+def run(cmd, timeout=900):
+    print("RUN:", " ".join(map(str, cmd)))
+    p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                       text=True, timeout=timeout)
+    print(p.stdout)
+    if p.returncode:
+        raise RuntimeError(f"Command failed: {p.returncode}")
 
 
-def get_font(size):
-    OUTPUT.mkdir(parents=True, exist_ok=True)
-
-    if not FONT_PATH.exists():
-        request = urllib.request.Request(
-            FONT_URL,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (X11; Linux x86_64) "
-                    "AppleWebKit/537.36 Chrome/124 Safari/537.36"
-                )
-            },
-        )
-        with urllib.request.urlopen(request, timeout=60) as response:
-            FONT_PATH.write_bytes(response.read())
-
-    return ImageFont.truetype(str(FONT_PATH), size)
+def font(size):
+    OUT.mkdir(exist_ok=True)
+    if not FONT.exists():
+        req = urllib.request.Request(FONT_URL, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=90) as r:
+            FONT.write_bytes(r.read())
+    return ImageFont.truetype(str(FONT), size)
 
 
-def wrap_text(text, width=28):
-    lines = []
-    for paragraph in text.splitlines():
-        paragraph = paragraph.strip()
-        if paragraph:
-            lines.extend(textwrap.wrap(paragraph, width=width))
-    return lines
+def wrap(s, width=30):
+    result = []
+    for p in s.splitlines():
+        p = p.strip()
+        if p:
+            result.extend(textwrap.wrap(p, width=width))
+    return result
 
 
-# ============================================================
-# SCRIPT
-# ============================================================
-
-def read_script():
+def get_script():
     if not SCRIPT.exists():
-        raise RuntimeError("output/daily_script.md was not generated.")
-
-    text = SCRIPT.read_text(encoding="utf-8").strip()
-
-    if not text:
-        raise RuntimeError("daily_script.md is empty.")
-
-    return text
+        raise RuntimeError("output/daily_script.md not found")
+    s = SCRIPT.read_text(encoding="utf-8").strip()
+    if not s:
+        raise RuntimeError("daily_script.md is empty")
+    return s
 
 
-def find_rashi_sections(script):
-    sections = {}
-
-    for rashi in RASHIS:
-        name = rashi["name"]
-        patterns = [
-            f"{name} राशि",
-            f"राशि: {name}",
-            f"**{name}**",
-            f"### {name}",
-            f"## {name}",
-        ]
-
-        start = -1
-        for pattern in patterns:
-            position = script.find(pattern)
-            if position >= 0:
-                start = position
+def rashi_sections(script):
+    out = {}
+    positions = {}
+    for name, _, _ in RASHIS:
+        pats = [f"{name} राशि", f"राशि: {name}", f"**{name}**", f"### {name}", f"## {name}"]
+        pos = -1
+        for p in pats:
+            q = script.find(p)
+            if q >= 0:
+                pos = q
                 break
-
-        if start < 0:
-            continue
-
-        end = len(script)
-
-        for other in RASHIS:
-            if other["name"] == name:
-                continue
-
-            for pattern in [
-                f"{other['name']} राशि",
-                f"राशि: {other['name']}",
-                f"**{other['name']}**",
-                f"### {other['name']}",
-                f"## {other['name']}",
-            ]:
-                position = script.find(
-                    pattern,
-                    start + len(name) + 2,
-                )
-                if 0 <= position < end:
-                    end = position
-
-        section = script[start:end].strip()
-        if section:
-            sections[name] = section
-
-    return sections
+        if pos >= 0:
+            positions[name] = pos
+    ordered = sorted(positions.items(), key=lambda x: x[1])
+    for i, (name, pos) in enumerate(ordered):
+        end = ordered[i+1][1] if i+1 < len(ordered) else len(script)
+        out[name] = script[pos:end].strip()
+    return out
 
 
-def fallback_section(rashi, script):
-    matches = []
-    for line in script.splitlines():
-        if rashi["name"] in line:
-            line = line.strip()
-            if line:
-                matches.append(line)
-
-    if matches:
-        return "\n".join(matches[:8])
-
-    return (
-        f"{rashi['name']} राशि के लिए आज के ग्रह गोचर "
-        "के सामान्य संकेत।"
-    )
-
-
-# ============================================================
-# DEITY ART
-# ============================================================
-
-def download_file(url, destination, retries=3):
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (X11; Linux x86_64) "
-            "AppleWebKit/537.36 Chrome/124 Safari/537.36"
-        ),
-        "Accept": (
-            "image/avif,image/webp,image/apng,image/svg+xml,"
-            "image/*,*/*;q=0.8"
-        ),
-        "Accept-Language": "en-US,en;q=0.9",
+def resolve_commons_url(filename):
+    """
+    Resolve a Commons file to a thumbnail URL. This avoids the old
+    hard-coded upload.wikimedia.org URL that produced HTTP 403.
+    """
+    api = "https://commons.wikimedia.org/w/api.php"
+    params = {
+        "action": "query",
+        "format": "json",
+        "prop": "imageinfo",
+        "iiprop": "url",
+        "iiurlwidth": "1200",
+        "titles": "File:" + filename,
     }
-
-    for attempt in range(1, retries + 1):
-        try:
-            print(
-                f"Downloading deity artwork "
-                f"(attempt {attempt}/{retries})"
-            )
-
-            request = urllib.request.Request(url, headers=headers)
-
-            with urllib.request.urlopen(request, timeout=60) as response:
-                data = response.read()
-
-            if not data:
-                raise RuntimeError("Downloaded file is empty.")
-
-            destination.write_bytes(data)
-
-            with Image.open(destination) as test_image:
-                test_image.verify()
-
-            print(f"Artwork ready: {destination}")
-            return True
-
-        except Exception as error:
-            print(f"Artwork download failed: {error}")
-
-            if destination.exists():
-                try:
-                    destination.unlink()
-                except Exception:
-                    pass
-
-            if attempt < retries:
-                time.sleep(attempt * 2)
-
-    return False
-
-
-def create_deity_fallback(deity, destination):
-    """
-    Guaranteed local fallback. It is deliberately devotional and visually
-    prominent, so a remote image failure never breaks the video.
-    """
-
-    image = Image.new("RGB", (1000, 1250), (12, 5, 32))
-    draw = ImageDraw.Draw(image)
-
-    om_font = get_font(190)
-    title_font = get_font(76)
-    subtitle_font = get_font(42)
-
-    # Large sacred Om.
-    bbox = draw.textbbox((0, 0), "ॐ", font=om_font)
-    draw.text(
-        ((1000 - (bbox[2] - bbox[0])) / 2, 180),
-        "ॐ",
-        font=om_font,
-        fill=(255, 215, 80),
+    url = api + "?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "DailyAstroHindi/1.0 (educational media generator)",
+            "Accept": "application/json",
+        },
     )
-
-    bbox = draw.textbbox((0, 0), deity, font=title_font)
-    draw.text(
-        ((1000 - (bbox[2] - bbox[0])) / 2, 560),
-        deity,
-        font=title_font,
-        fill=(255, 255, 255),
-    )
-
-    subtitle = "दिव्य शक्ति • शुभ ऊर्जा • आशीर्वाद"
-    bbox = draw.textbbox((0, 0), subtitle, font=subtitle_font)
-    draw.text(
-        ((1000 - (bbox[2] - bbox[0])) / 2, 710),
-        subtitle,
-        font=subtitle_font,
-        fill=(255, 220, 130),
-    )
-
-    image.save(destination, quality=95)
+    with urllib.request.urlopen(req, timeout=60) as r:
+        data = json.loads(r.read().decode("utf-8"))
+    pages = data.get("query", {}).get("pages", {})
+    for page in pages.values():
+        info = page.get("imageinfo")
+        if info:
+            return info[0].get("thumburl") or info[0].get("url")
+    return None
 
 
-def download_deity_images():
+def download_deity(name):
     DEITIES.mkdir(parents=True, exist_ok=True)
+    data = DEITY_DATA[name]
+    dest = DEITIES / (re.sub(r"[^A-Za-z0-9]+", "_", name) + ".jpg")
 
-    unique = {}
-    for item in RASHIS:
-        unique[item["image"]] = item
+    if dest.exists():
+        try:
+            Image.open(dest).verify()
+            return dest
+        except Exception:
+            dest.unlink(missing_ok=True)
 
-    credit_lines = [
-        "DEVOTIONAL ARTWORK CREDITS",
-        "===========================",
-        "",
-    ]
+    last = None
+    for attempt in range(1, 5):
+        try:
+            image_url = resolve_commons_url(data["file"])
+            if not image_url:
+                raise RuntimeError("Commons API returned no image URL")
 
-    for filename, item in unique.items():
-        destination = DEITIES / filename
-
-        if not destination.exists():
-            ok = download_file(
-                item["url"],
-                destination,
-                retries=3,
+            print(f"Downloading {name}: {image_url}")
+            req = urllib.request.Request(
+                image_url,
+                headers={
+                    "User-Agent": "DailyAstroHindi/1.0 (educational media generator)",
+                    "Accept": "image/avif,image/webp,image/jpeg,image/png,*/*",
+                    "Referer": "https://commons.wikimedia.org/",
+                },
             )
+            with urllib.request.urlopen(req, timeout=90) as r:
+                raw = r.read()
 
-            if not ok:
-                print(
-                    f"Using local devotional fallback for "
-                    f"{item['deity']}"
-                )
-                create_deity_fallback(
-                    item["deity"],
-                    destination,
-                )
+            temp = dest.with_suffix(".download")
+            temp.write_bytes(raw)
+            with Image.open(temp) as im:
+                im.convert("RGB").save(dest, "JPEG", quality=94)
+            temp.unlink(missing_ok=True)
+            return dest
 
-                credit_lines.extend([
-                    f"{item['deity']}",
-                    "Fallback devotional artwork generated locally.",
-                    "",
-                ])
-                continue
+        except Exception as e:
+            last = e
+            print(f"Deity download attempt {attempt} failed: {e}")
+            time.sleep(attempt * 2)
 
-        credit_lines.extend([
-            f"{item['deity']}",
-            f"Source: {item['source']}",
-            f"License: {item['license']}",
-            f"Image URL: {item['url']}",
+    # Do NOT silently pretend that a plain Om is a deity. Build a clearly
+    # labelled devotional illustration with deity-specific iconography.
+    print(f"Using deity illustration fallback for {name}: {last}")
+    create_deity_illustration(name, dest)
+    return dest
+
+
+def create_deity_illustration(name, dest):
+    """
+    Guaranteed local visual fallback. It is deity-specific, not the generic
+    Om card used by the previous version.
+    """
+    im = Image.new("RGB", (1000, 1100), (13, 7, 30))
+    d = ImageDraw.Draw(im)
+    title = font(66)
+    big = font(260)
+    sub = font(42)
+
+    # deity-specific symbol / silhouette
+    symbols = {
+        "हनुमान जी": "हनु",
+        "महालक्ष्मी जी": "श्री",
+        "श्री गणेश जी": "गण",
+        "भगवान शिव": "शिव",
+        "सूर्य देव": "सूर्य",
+        "भगवान विष्णु": "विष्णु",
+        "शनि देव": "शनि",
+    }
+    symbol = symbols.get(name, "ॐ")
+
+    # large decorative halo
+    d.ellipse((140, 70, 860, 790), outline=(255, 202, 70), width=12)
+    d.ellipse((190, 120, 810, 740), outline=(255, 226, 150), width=4)
+
+    b = d.textbbox((0, 0), symbol, font=big)
+    d.text(((1000-(b[2]-b[0]))/2, 250), symbol, font=big,
+           fill=(255, 210, 80))
+
+    b = d.textbbox((0, 0), name, font=title)
+    d.text(((1000-(b[2]-b[0]))/2, 825), name, font=title,
+           fill=(255, 245, 215))
+
+    subtitle = "दिव्य स्वरूप • आशीर्वाद • शुभ ऊर्जा"
+    b = d.textbbox((0, 0), subtitle, font=sub)
+    d.text(((1000-(b[2]-b[0]))/2, 935), subtitle, font=sub,
+           fill=(238, 216, 155))
+
+    im.save(dest, "JPEG", quality=95)
+
+
+def prepare_deities():
+    credits = ["DEVOTIONAL ARTWORK CREDITS", "===========================", ""]
+    done = {}
+    for _, _, deity in RASHIS:
+        if deity in done:
+            continue
+        path = download_deity(deity)
+        done[deity] = path
+        credits += [
+            deity,
+            "Source: " + DEITY_DATA[deity]["credit"],
+            "License: " + DEITY_DATA[deity]["license"],
             "",
-        ])
-
-    CREDITS.write_text(
-        "\n".join(credit_lines),
-        encoding="utf-8",
-    )
+        ]
+    CREDITS.write_text("\n".join(credits), encoding="utf-8")
+    return done
 
 
-# ============================================================
-# IMAGE COMPOSITION
-# ============================================================
+def crop_fill(im, w, h):
+    im = im.convert("RGB")
+    scale = max(w/im.width, h/im.height)
+    nw, nh = int(im.width*scale), int(im.height*scale)
+    im = im.resize((nw, nh), Image.Resampling.LANCZOS)
+    x, y = (nw-w)//2, (nh-h)//2
+    return im.crop((x, y, x+w, y+h))
 
-def fit_crop(image, target_w, target_h):
+
+def create_scene(rashi, emoji, deity, content, deity_path, out):
     """
-    Fill a target rectangle while preserving aspect ratio.
+    Creates a 1080x1920 master still. Animation is applied by ffmpeg:
+    slow zoom + glow + crossfade. The deity occupies most of the upper half.
     """
-    image = image.convert("RGB")
-
-    scale = max(
-        target_w / image.width,
-        target_h / image.height,
-    )
-
-    new_w = max(1, int(image.width * scale))
-    new_h = max(1, int(image.height * scale))
-
-    image = image.resize(
-        (new_w, new_h),
-        Image.Resampling.LANCZOS,
-    )
-
-    left = max(0, (new_w - target_w) // 2)
-    top = max(0, (new_h - target_h) // 2)
-
-    return image.crop(
-        (
-            left,
-            top,
-            left + target_w,
-            top + target_h,
-        )
-    )
-
-
-def create_intro():
-    path = SCENES / "000_intro.jpg"
-
-    image = Image.new(
-        "RGB",
-        (WIDTH, HEIGHT),
-        (10, 5, 28),
-    )
-    draw = ImageDraw.Draw(image)
-
-    om_font = get_font(160)
-    title_font = get_font(78)
-    subtitle_font = get_font(48)
-    small_font = get_font(34)
-
-    bbox = draw.textbbox((0, 0), "ॐ", font=om_font)
-    draw.text(
-        ((WIDTH - bbox[2] + bbox[0]) / 2, 300),
-        "ॐ",
-        font=om_font,
-        fill=(255, 215, 80),
-    )
-
-    title = "दैनिक वैदिक ज्योतिष"
-    bbox = draw.textbbox((0, 0), title, font=title_font)
-    draw.text(
-        ((WIDTH - (bbox[2] - bbox[0])) / 2, 600),
-        title,
-        font=title_font,
-        fill=(255, 255, 255),
-    )
-
-    subtitle = "आज का गोचर विश्लेषण"
-    bbox = draw.textbbox((0, 0), subtitle, font=subtitle_font)
-    draw.text(
-        ((WIDTH - (bbox[2] - bbox[0])) / 2, 750),
-        subtitle,
-        font=subtitle_font,
-        fill=(255, 220, 130),
-    )
-
-    footer = "निरयन • लाहिरी • चंद्र राशि"
-    bbox = draw.textbbox((0, 0), footer, font=small_font)
-    draw.text(
-        ((WIDTH - (bbox[2] - bbox[0])) / 2, 1500),
-        footer,
-        font=small_font,
-        fill=(220, 215, 235),
-    )
-
-    image.save(path, quality=95)
-    return path
-
-
-def create_rashi_scene(rashi, content, output_path):
-    """
-    NEW PROMINENT-DEITY LAYOUT
-
-    Vertical 1080x1920 composition:
-
-      0-180       Rashi title
-      220-1050    LARGE deity hero image (~830 px high)
-      1050-1140   deity name
-      1180-1690   astrology text
-      1780-1840   footer
-
-    The deity is intentionally much larger than in the previous version.
-    """
-
-    image_path = DEITIES / rashi["image"]
-
-    deity = Image.open(image_path).convert("RGB")
-
-    # --------------------------------------------------------
-    # Background: enlarged, blurred version of the deity.
-    # This gives the scene a devotional visual identity without
-    # reducing the clarity of the foreground deity.
-    # --------------------------------------------------------
-
-    bg = fit_crop(
-        deity,
-        WIDTH,
-        HEIGHT,
-    )
-    bg = bg.filter(
-        ImageFilter.GaussianBlur(radius=28)
-    )
-
-    dark_overlay = Image.new(
-        "RGBA",
-        (WIDTH, HEIGHT),
-        (0, 0, 0, 155),
-    )
-
-    canvas = Image.alpha_composite(
-        bg.convert("RGBA"),
-        dark_overlay,
-    )
-
-    draw = ImageDraw.Draw(canvas)
-
-    # --------------------------------------------------------
-    # Fonts
-    # --------------------------------------------------------
-
-    title_font = get_font(72)
-    deity_font = get_font(48)
-    body_font = get_font(37)
-    footer_font = get_font(29)
-
-    # --------------------------------------------------------
-    # Rashi title
-    # --------------------------------------------------------
-
-    title = f"{rashi['emoji']} {rashi['name']} राशि"
-
-    bbox = draw.textbbox(
-        (0, 0),
-        title,
-        font=title_font,
-    )
-
-    draw.rounded_rectangle(
-        (35, 35, WIDTH - 35, 175),
-        radius=35,
-        fill=(5, 2, 20, 215),
-        outline=(255, 215, 80, 220),
-        width=3,
-    )
-
-    draw.text(
-        (
-            (WIDTH - (bbox[2] - bbox[0])) / 2,
-            62,
-        ),
-        title,
-        font=title_font,
-        fill=(255, 220, 90),
-    )
-
-    # --------------------------------------------------------
-    # LARGE DEITY HERO PANEL
-    # --------------------------------------------------------
-
-    panel_x1 = 35
-    panel_y1 = 215
-    panel_x2 = WIDTH - 35
-    panel_y2 = 1090
-
-    draw.rounded_rectangle(
-        (panel_x1, panel_y1, panel_x2, panel_y2),
-        radius=42,
-        fill=(2, 1, 15, 235),
-        outline=(255, 215, 80, 240),
-        width=5,
-    )
-
-    # Image area: approximately 820 x 760.
-    target_w = 840
-    target_h = 760
-
-    deity_display = fit_crop(
-        deity,
-        target_w,
-        target_h,
-    )
-
-    # Rounded-mask effect.
-    mask = Image.new(
-        "L",
-        (target_w, target_h),
-        0,
-    )
-    mask_draw = ImageDraw.Draw(mask)
-    mask_draw.rounded_rectangle(
-        (0, 0, target_w, target_h),
-        radius=35,
-        fill=255,
-    )
-
-    x = (WIDTH - target_w) // 2
-    y = panel_y1 + 35
-
-    canvas.paste(
-        deity_display,
-        (x, y),
-        mask,
-    )
-
-    # Subtle border around hero image.
-    draw.rounded_rectangle(
-        (
-            x,
-            y,
-            x + target_w,
-            y + target_h,
-        ),
-        radius=35,
-        outline=(255, 225, 130, 230),
-        width=4,
-    )
-
-    # --------------------------------------------------------
-    # DEITY NAME: PROMINENT
-    # --------------------------------------------------------
-
-    deity_label = f"॥ {rashi['deity']} ॥"
-
-    bbox = draw.textbbox(
-        (0, 0),
-        deity_label,
-        font=deity_font,
-    )
-
-    draw.text(
-        (
-            (WIDTH - (bbox[2] - bbox[0])) / 2,
-            1000,
-        ),
-        deity_label,
-        font=deity_font,
-        fill=(255, 242, 200),
-    )
-
-    # --------------------------------------------------------
-    # ASTROLOGY TEXT PANEL
-    # --------------------------------------------------------
-
-    text_top = 1140
-    text_bottom = 1690
-
-    draw.rounded_rectangle(
-        (
-            42,
-            text_top,
-            WIDTH - 42,
-            text_bottom,
-        ),
-        radius=32,
-        fill=(3, 2, 16, 235),
-        outline=(160, 145, 190, 120),
-        width=2,
-    )
-
-    lines = wrap_text(
-        content,
-        width=30,
-    )
-
-    y = text_top + 38
-
-    for line in lines[:11]:
-        draw.text(
-            (75, y),
-            line,
-            font=body_font,
-            fill=(255, 255, 255),
-        )
-
-        y += 51
-
-        if y > text_bottom - 55:
-            break
-
-    # --------------------------------------------------------
-    # FOOTER
-    # --------------------------------------------------------
-
-    footer = "वैदिक गोचर • निरयन • लाहिरी"
-
-    bbox = draw.textbbox(
-        (0, 0),
-        footer,
-        font=footer_font,
-    )
-
-    draw.text(
-        (
-            (WIDTH - (bbox[2] - bbox[0])) / 2,
-            1785,
-        ),
-        footer,
-        font=footer_font,
-        fill=(225, 220, 240),
-    )
-
-    canvas.convert("RGB").save(
-        output_path,
-        quality=95,
-    )
-
-
-def create_final():
-    path = SCENES / "999_final.jpg"
-
-    image = Image.new(
-        "RGB",
-        (WIDTH, HEIGHT),
-        (10, 5, 28),
-    )
-    draw = ImageDraw.Draw(image)
-
-    title_font = get_font(78)
-    body_font = get_font(46)
-    small_font = get_font(32)
-
-    title = "🙏 धन्यवाद"
-    bbox = draw.textbbox((0, 0), title, font=title_font)
-    draw.text(
-        ((WIDTH - (bbox[2] - bbox[0])) / 2, 400),
-        title,
-        font=title_font,
-        fill=(255, 215, 80),
-    )
-
-    messages = [
-        "दैनिक वैदिक ज्योतिष अपडेट",
-        "वीडियो पसंद आए तो लाइक करें",
-        "चैनल को सब्सक्राइब करें",
-    ]
-
-    y = 650
-    for message in messages:
-        bbox = draw.textbbox((0, 0), message, font=body_font)
-        draw.text(
-            ((WIDTH - (bbox[2] - bbox[0])) / 2, y),
-            message,
-            font=body_font,
-            fill=(255, 255, 255),
-        )
-        y += 115
-
-    disclaimer = (
-        "यह प्रस्तुति पारंपरिक वैदिक ज्योतिषीय "
-        "गोचर सिद्धांतों पर आधारित सामान्य जानकारी है।"
-    )
-
-    y = 1250
-    for line in textwrap.wrap(disclaimer, width=35):
-        bbox = draw.textbbox((0, 0), line, font=small_font)
-        draw.text(
-            ((WIDTH - (bbox[2] - bbox[0])) / 2, y),
-            line,
-            font=small_font,
-            fill=(210, 205, 225),
-        )
-        y += 55
-
-    image.save(path, quality=95)
-    return path
-
-
-# ============================================================
-# VOICE
-# ============================================================
-
-async def create_voice(text):
-    print("Generating Hindi narration...")
-
-    communicate = edge_tts.Communicate(
-        text,
-        VOICE_NAME,
-        rate="+5%",
-        volume="+0%",
-    )
-
+    deity_im = Image.open(deity_path).convert("RGB")
+    bg = crop_fill(deity_im, W, H).filter(ImageFilter.GaussianBlur(32))
+    bg = Image.blend(bg, Image.new("RGB", (W,H), (4,2,18)), 0.72)
+    canvas = bg.convert("RGBA")
+    d = ImageDraw.Draw(canvas)
+
+    title = font(72)
+    deity_f = font(56)
+    body = font(36)
+    small = font(29)
+
+    # Header
+    d.rounded_rectangle((25, 25, W-25, 170), 34,
+                        fill=(3,1,17,225), outline=(255,210,70,240), width=4)
+    t = f"{emoji}  {rashi} राशि"
+    b = d.textbbox((0,0), t, font=title)
+    d.text(((W-(b[2]-b[0]))/2, 57), t, font=title, fill=(255,220,90))
+
+    # Hero image, deliberately large
+    x1,y1,x2,y2 = 35,205,W-35,1085
+    d.rounded_rectangle((x1,y1,x2,y2), 45,
+                        fill=(0,0,0,90), outline=(255,215,80,245), width=5)
+
+    hero = crop_fill(deity_im, 900, 760)
+    mask = Image.new("L", hero.size, 0)
+    md = ImageDraw.Draw(mask)
+    md.rounded_rectangle((0,0,hero.width-1,hero.height-1), 38, fill=255)
+    canvas.paste(hero, (90,270), mask)
+    d.rounded_rectangle((90,270,990,1030), 38,
+                        outline=(255,232,150,235), width=4)
+
+    b = d.textbbox((0,0), f"॥ {deity} ॥", font=deity_f)
+    d.text(((W-(b[2]-b[0]))/2, 1100), f"॥ {deity} ॥",
+           font=deity_f, fill=(255,242,200))
+
+    # astrology text panel
+    d.rounded_rectangle((35,1180,W-35,1690), 34,
+                        fill=(2,2,16,235), outline=(150,135,190,130), width=2)
+    y=1220
+    for line in wrap(content, 31)[:10]:
+        d.text((72,y), line, font=body, fill=(255,255,255))
+        y += 49
+
+    # animated-style footer elements
+    d.text((70,1765), "ॐ  वैदिक गोचर  ॐ", font=small,
+           fill=(255,220,120))
+    d.text((W-70-d.textbbox((0,0),"शुभम्",font=small)[2],1765),
+           "शुभम्", font=small, fill=(220,210,235))
+
+    canvas.convert("RGB").save(out, quality=95)
+
+
+def create_intro(path):
+    im = Image.new("RGB",(W,H),(7,3,25))
+    d=ImageDraw.Draw(im)
+    f1=font(175); f2=font(80); f3=font(48)
+    b=d.textbbox((0,0),"ॐ",font=f1)
+    d.text(((W-(b[2]-b[0]))/2,360),"ॐ",font=f1,fill=(255,214,75))
+    for y,txt,ft,fill in [
+        (700,"दैनिक वैदिक ज्योतिष",f2,(255,255,255)),
+        (830,"आज का गोचर विश्लेषण",f2,(255,220,135)),
+        (980,"चंद्र राशि • निरयन • लाहिरी",f3,(220,215,235)),
+    ]:
+        b=d.textbbox((0,0),txt,font=ft)
+        d.text(((W-(b[2]-b[0]))/2,y),txt,font=ft,fill=fill)
+    im.save(path,quality=95)
+
+
+def create_final(path):
+    im=Image.new("RGB",(W,H),(7,3,25)); d=ImageDraw.Draw(im)
+    f1=font(100); f2=font(52)
+    b=d.textbbox((0,0),"🙏 धन्यवाद 🙏",font=f1)
+    d.text(((W-(b[2]-b[0]))/2,600),"🙏 धन्यवाद 🙏",font=f1,fill=(255,220,90))
+    for i,txt in enumerate(["वीडियो पसंद आए तो लाइक करें","चैनल को सब्सक्राइब करें"]):
+        b=d.textbbox((0,0),txt,font=f2)
+        d.text(((W-(b[2]-b[0]))/2,850+i*110),txt,font=f2,fill=(255,255,255))
+    im.save(path,quality=95)
+
+
+async def make_voice(text):
+    communicate=edge_tts.Communicate(text,VOICE_NAME,rate="+5%")
     await communicate.save(str(VOICE))
 
-    if not VOICE.exists():
-        raise RuntimeError("Hindi voice was not created.")
+
+def audio_duration(ffmpeg):
+    p=subprocess.run([ffmpeg,"-i",str(VOICE)],stdout=subprocess.PIPE,
+                     stderr=subprocess.PIPE,text=True)
+    m=re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)",p.stderr)
+    if not m:
+        raise RuntimeError("Could not read voice duration")
+    return int(m.group(1))*3600+int(m.group(2))*60+float(m.group(3))
 
 
-def get_audio_duration(ffmpeg):
-    result = subprocess.run(
-        [
-            ffmpeg,
-            "-i",
-            str(VOICE),
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=60,
+def make_animated_rashi_video(ffmpeg, scene, duration, index, output):
+    """
+    Animation:
+      - slow cinematic zoom
+      - gentle vertical drift
+      - light pulse / vignette
+      - no abrupt static slideshow feel
+    """
+    zoom = "1.0+0.055*(on/{frames})"
+    frames = max(2,int(duration*FPS))
+    zoom = f"min(zoom+0.00032,1.055)"
+    # zoompan's d controls exact frame count.
+    vf = (
+        f"zoompan=z='{zoom}':"
+        f"x='iw/2-(iw/zoom/2)':"
+        f"y='ih/2-(ih/zoom/2)+8*sin(on/18)':"
+        f"d={frames}:s={W}x{H}:fps={FPS},"
+        "eq=brightness='0.015*sin(2*PI*on/45)':"
+        "saturation=1.08"
     )
+    run([ffmpeg,"-y","-loop","1","-i",str(scene),
+         "-vf",vf,"-t",f"{duration:.3f}",
+         "-r",str(FPS),"-c:v","libx264","-preset","veryfast",
+         "-crf","23","-pix_fmt","yuv420p",str(output)], timeout=600)
 
-    match = re.search(
-        r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)",
-        result.stderr,
-    )
 
-    if not match:
-        raise RuntimeError(
-            "Could not determine narration duration."
+def build_video(ffmpeg, scenes, duration):
+    """
+    Builds each scene as a moving clip and joins them with short dissolves.
+    """
+    n = len(scenes)
+    intro = min(5.0, max(3.0,duration*0.01))
+    outro = min(5.0, max(3.0,duration*0.01))
+    rashi_time = max(8.0,(duration-intro-outro)/12.0)
+
+    clips=[]
+    for i,scene in enumerate(scenes):
+        if i==0:
+            dur=intro
+        elif i==len(scenes)-1:
+            dur=outro
+        else:
+            dur=rashi_time
+        clip=SCENES/f"clip_{i:02d}.mp4"
+        make_animated_rashi_video(ffmpeg,scene,dur,i,clip)
+        clips.append((clip,dur))
+
+    # Crossfade each adjacent pair. For reliability, use xfade chain.
+    current=clips[0][0]
+    current_dur=clips[0][1]
+    for i in range(1,len(clips)):
+        nxt,nxt_dur=clips[i]
+        out=SCENES/f"xfade_{i:02d}.mp4"
+        offset=max(0.1,current_dur-0.8)
+        filter_complex=(
+            f"[0:v][1:v]xfade=transition=fade:"
+            f"duration=0.8:offset={offset:.3f},format=yuv420p[v]"
         )
+        new_dur=current_dur+nxt_dur-0.8
+        run([ffmpeg,"-y","-i",str(current),"-i",str(nxt),
+             "-filter_complex",filter_complex,
+             "-map","[v]","-an","-c:v","libx264","-preset","veryfast",
+             "-crf","23","-pix_fmt","yuv420p",str(out)],timeout=900)
+        current=out
+        current_dur=new_dur
 
-    hours = int(match.group(1))
-    minutes = int(match.group(2))
-    seconds = float(match.group(3))
+    run([ffmpeg,"-y","-i",str(current),"-i",str(VOICE),
+         "-map","0:v:0","-map","1:a:0",
+         "-c:v","copy","-c:a","aac","-b:a","128k",
+         "-shortest",str(VIDEO)],timeout=900)
 
-    return hours * 3600 + minutes * 60 + seconds
-
-
-# ============================================================
-# VIDEO BUILD
-# ============================================================
-
-def build_video(ffmpeg, scene_files, duration):
-    print("Building final vertical video...")
-
-    intro_duration = min(8.0, duration * 0.03)
-    final_duration = min(8.0, duration * 0.03)
-
-    rashi_files = scene_files[1:-1]
-
-    remaining = duration - intro_duration - final_duration
-
-    if remaining <= 0:
-        raise RuntimeError("Invalid narration duration.")
-
-    rashi_duration = remaining / max(1, len(rashi_files))
-
-    concat_file = SCENES / "video_concat.txt"
-
-    with concat_file.open("w", encoding="utf-8") as f:
-        def add_scene(path, seconds):
-            safe = str(path.resolve()).replace("'", "'\\''")
-            f.write(f"file '{safe}'\n")
-            f.write(f"duration {seconds:.3f}\n")
-
-        add_scene(scene_files[0], intro_duration)
-
-        for scene in rashi_files:
-            add_scene(scene, rashi_duration)
-
-        add_scene(scene_files[-1], final_duration)
-
-        # concat demuxer needs the final file repeated.
-        safe = str(scene_files[-1].resolve()).replace("'", "'\\''")
-        f.write(f"file '{safe}'\n")
-
-    silent_video = SCENES / "silent_video.mp4"
-
-    run([
-        ffmpeg,
-        "-y",
-        "-f",
-        "concat",
-        "-safe",
-        "0",
-        "-i",
-        str(concat_file),
-        "-vf",
-        f"scale={WIDTH}:{HEIGHT}:"
-        "force_original_aspect_ratio=decrease,"
-        f"pad={WIDTH}:{HEIGHT}:(ow-iw)/2:(oh-ih)/2",
-        "-r",
-        str(FPS),
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-crf",
-        "23",
-        "-pix_fmt",
-        "yuv420p",
-        "-an",
-        str(silent_video),
-    ])
-
-    run([
-        ffmpeg,
-        "-y",
-        "-i",
-        str(silent_video),
-        "-i",
-        str(VOICE),
-        "-map",
-        "0:v:0",
-        "-map",
-        "1:a:0",
-        "-c:v",
-        "copy",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "128k",
-        "-shortest",
-        str(VIDEO),
-    ])
-
-    if not VIDEO.exists():
-        raise RuntimeError(
-            "daily_video.mp4 was not created."
-        )
-
-
-# ============================================================
-# MAIN
-# ============================================================
 
 def main():
-    OUTPUT.mkdir(parents=True, exist_ok=True)
-    SCENES.mkdir(parents=True, exist_ok=True)
-    DEITIES.mkdir(parents=True, exist_ok=True)
+    OUT.mkdir(exist_ok=True)
+    SCENES.mkdir(exist_ok=True)
+    DEITIES.mkdir(exist_ok=True)
 
-    # Clean only generated scene files.
-    for pattern in (
-        "*.jpg",
-        "*.mp4",
-        "video_concat.txt",
-    ):
-        for file in SCENES.glob(pattern):
-            try:
-                file.unlink()
-            except Exception:
-                pass
+    # Clean renderer-generated clips only.
+    for p in SCENES.glob("*"):
+        if p.is_file():
+            p.unlink()
 
-    script = read_script()
+    script=get_script()
+    sections=rashi_sections(script)
+    deity_paths=prepare_deities()
 
-    print("Astrology script loaded.")
+    asyncio.run(make_voice(script))
+    ffmpeg=imageio_ffmpeg.get_ffmpeg_exe()
+    duration=audio_duration(ffmpeg)
+    print("Narration:",duration,"seconds")
 
-    # Deity preparation is isolated from astrology logic.
-    download_deity_images()
+    intro=SCENES/"000_intro.jpg"
+    create_intro(intro)
+    scenes=[intro]
 
-    asyncio.run(create_voice(script))
-
-    scene_files = []
-    scene_files.append(create_intro())
-
-    sections = find_rashi_sections(script)
-
-    print(
-        f"Detected {len(sections)} explicit Rashi sections."
-    )
-
-    # Always render all 12 Rashis.
-    for index, rashi in enumerate(RASHIS, start=1):
-        content = sections.get(rashi["name"])
-
-        if not content:
-            content = fallback_section(rashi, script)
-
-        scene_path = (
-            SCENES /
-            f"{index:03d}_{rashi['name']}.jpg"
-        )
-
-        print(
-            f"Rendering {index}/12: "
-            f"{rashi['name']} -> {rashi['deity']}"
-        )
-
-        create_rashi_scene(
+    for i,(rashi,emoji,deity) in enumerate(RASHIS,1):
+        content=sections.get(
             rashi,
-            content,
-            scene_path,
+            f"{rashi} राशि: आज के ग्रह गोचर के महत्वपूर्ण संकेत।"
         )
+        p=SCENES/f"{i:03d}_{rashi}.jpg"
+        create_scene(rashi,emoji,deity,content,deity_paths[deity],p)
+        scenes.append(p)
 
-        scene_files.append(scene_path)
+    final=SCENES/"999_final.jpg"
+    create_final(final)
+    scenes.append(final)
 
-    scene_files.append(create_final())
+    build_video(ffmpeg,scenes,duration)
 
-    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
-    duration = get_audio_duration(ffmpeg)
-
-    print(
-        f"Narration duration: {duration:.2f} seconds"
-    )
-
-    build_video(
-        ffmpeg,
-        scene_files,
-        duration,
-    )
-
-    print()
     print("==========================================")
-    print("VEDIC ASTROLOGY VIDEO COMPLETE")
-    print("==========================================")
-    print(f"VIDEO   : {VIDEO}")
-    print(f"VOICE   : {VOICE}")
-    print(f"CREDITS : {CREDITS}")
+    print("VIDEO COMPLETE")
+    print(VIDEO)
     print("==========================================")
 
 
-if __name__ == "__main__":
+if __name__=="__main__":
     main()
