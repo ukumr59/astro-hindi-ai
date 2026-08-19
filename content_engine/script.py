@@ -1,21 +1,19 @@
 """
-Hindi daily content engine for the Vedic / Jyotisha system.
-
-The script is designed for a mass daily horoscope.
+Hindi daily horoscope content engine.
 
 Reference:
-    Chandra Rashi / Moon-sign based gochara
+    Chandra Rashi / Moon-sign based daily gochara.
 
 Method:
     Nirayana / sidereal planetary positions
     + Lahiri ayanamsha
-    + classical graha gochara tendencies
-    + graha drishti
+    + classical graha gochara
+    + classical graha drishti
     + retrograde modifiers
-    + detected sign-change events
+    + sign-change events
 
-The output is intentionally concise enough for approximately
-2–3 minutes of Hindi narration.
+The output is designed for approximately
+3–5 minutes of Hindi narration.
 """
 
 from datetime import datetime
@@ -23,50 +21,76 @@ from datetime import datetime
 from astro_engine.rules import (
     SIGN_HI,
     PLANET_HI,
-    interpret_for_rashi,
+    HOUSE_THEMES,
+    relative_house,
     rashi_summary,
 )
 
 
 # ============================================================
-# CONTENT SETTINGS
+# PLANET IMPORTANCE
 # ============================================================
 
-MAX_WORDS_APPROX = 500
-
-IMPORTANT_PLANETS = {
-    "Jupiter",
-    "Saturn",
-    "Rahu",
-    "Ketu",
-    "Mars",
-    "Venus",
-    "Mercury",
-    "Sun",
-    "Moon",
+PLANET_PRIORITY = {
+    "Saturn": 10,
+    "Jupiter": 10,
+    "Rahu": 9,
+    "Ketu": 9,
+    "Mars": 8,
+    "Sun": 7,
+    "Venus": 6,
+    "Mercury": 6,
+    "Moon": 5,
 }
 
 
 # ============================================================
-# HELPER FUNCTIONS
+# GENERAL HELPERS
 # ============================================================
 
 def planet_name(planet):
-    """
-    Return the Hindi name of a planet.
-    """
     return PLANET_HI.get(
         planet,
         planet
     )
 
 
-def format_position(position):
+def date_text(value):
+    if isinstance(value, datetime):
+        return value.strftime(
+            "%d-%m-%Y"
+        )
+
+    return str(value)
+
+
+def clean_text(text):
     """
-    Convert a planetary position into natural Hindi.
+    Remove accidental duplicated punctuation.
     """
 
-    name = planet_name(position.planet)
+    text = text.replace(
+        "।।",
+        "।"
+    )
+
+    text = text.replace(
+        "  ",
+        " "
+    )
+
+    return text.strip()
+
+
+# ============================================================
+# PLANETARY POSITIONS
+# ============================================================
+
+def format_position(position):
+
+    name = planet_name(
+        position.planet
+    )
 
     sign = SIGN_HI[
         position.sign_index
@@ -74,24 +98,27 @@ def format_position(position):
 
     retrograde = ""
 
-    if position.retrograde and position.planet not in {
-        "Rahu",
-        "Ketu",
-    }:
-        retrograde = " (वक्री)"
+    if (
+        position.retrograde
+        and position.planet not in {
+            "Rahu",
+            "Ketu"
+        }
+    ):
+        retrograde = " वक्री"
 
     return (
-        f"{name} "
-        f"{position.longitude:.2f}° "
-        f"{sign}{retrograde}"
+        f"{name} {sign राशि में "
+        f"{position.longitude:.2f} डिग्री"
+        f"{retrograde}"
     )
 
 
+# ============================================================
+# TRANSIT EVENTS
+# ============================================================
+
 def event_lines(events):
-    """
-    Convert detected planetary sign-change events into
-    concise Hindi narration.
-    """
 
     if not events:
         return [
@@ -101,74 +128,335 @@ def event_lines(events):
     lines = []
 
     for event in events[:4]:
-        lines.append(
+
+        description = clean_text(
             event.description_hi
+        )
+
+        lines.append(
+            description
         )
 
     return lines
 
 
-def importance_score(item):
-    """
-    Ranking helper for planetary influences.
-    """
+# ============================================================
+# RASHI SCORE LABEL
+# ============================================================
 
-    return abs(
-        item.get("score", 0)
-    )
+def rashi_label(score):
 
+    if score >= 5:
+        return "आज का गोचर अपेक्षाकृत अनुकूल है"
 
-def overall_rashi_label(score):
-    """
-    Convert numerical Vedic transit score into a
-    viewer-friendly Hindi label.
-    """
+    if score <= -5:
+        return "आज धैर्य और सावधानी की आवश्यकता है"
 
-    if score >= 4:
-        return "अनुकूल"
-
-    if score <= -4:
-        return "सावधानी"
-
-    return "मिश्रित"
+    return "आज का गोचर मिश्रित संकेत दे रहा है"
 
 
-def short_influence_text(influence):
-    """
-    Keep individual planetary interpretation short enough
-    for a 2–3 minute video.
-    """
+# ============================================================
+# CATEGORY INTERPRETATION
+# ============================================================
 
-    text = influence["text"]
+def category_advice(summary):
 
-    sentences = text.split("।")
-
-    sentences = [
-        sentence.strip()
-        for sentence in sentences
-        if sentence.strip()
+    influences = summary[
+        "influences"
     ]
 
-    if len(sentences) > 2:
-        sentences = sentences[:2]
+    positive = [
+        item
+        for item in influences
+        if item["score"] > 0
+    ]
 
-    if not sentences:
-        return ""
+    challenging = [
+        item
+        for item in influences
+        if item["score"] < 0
+    ]
 
-    return "। ".join(sentences) + "।"
+    # --------------------------------------------------------
+    # Career
+    # --------------------------------------------------------
+
+    career_houses = {
+        3,
+        6,
+        10,
+        11
+    }
+
+    career_items = [
+        item
+        for item in influences
+        if item["house"] in career_houses
+    ]
+
+    if career_items:
+        best = max(
+            career_items,
+            key=lambda item: item["score"]
+        )
+
+        if best["score"] > 0:
+            career = (
+                f"करियर में {planet_name(best['planet'])} "
+                "के गोचर से प्रयासों और काम को आगे बढ़ाने "
+                "का अवसर मिल सकता है।"
+            )
+        else:
+            career = (
+                "करियर में जल्दबाजी से बचें और लंबित "
+                "जिम्मेदारियों को प्राथमिकता से पूरा करें।"
+            )
+    else:
+        career = (
+            "करियर में स्थिरता बनाए रखने और नियमित "
+            "प्रयास जारी रखने का दिन है।"
+        )
+
+    # --------------------------------------------------------
+    # Finance
+    # --------------------------------------------------------
+
+    finance_houses = {
+        2,
+        8,
+        11,
+        12
+    }
+
+    finance_items = [
+        item
+        for item in influences
+        if item["house"] in finance_houses
+    ]
+
+    if finance_items:
+        strongest = max(
+            finance_items,
+            key=lambda item: item["score"]
+        )
+
+        if strongest["score"] > 0:
+            finance = (
+                "धन संबंधी मामलों में अवसर दिखाई दे सकते हैं, "
+                "लेकिन लाभ को स्थायी बनाने के लिए योजना जरूरी रहेगी।"
+            )
+        else:
+            finance = (
+                "धन के मामले में अनावश्यक खर्च और जोखिम "
+                "से बचना बेहतर रहेगा।"
+            )
+    else:
+        finance = (
+            "आज धन के मामले में संतुलित बजट बनाए रखना उचित रहेगा।"
+        )
+
+    # --------------------------------------------------------
+    # Relationships
+    # --------------------------------------------------------
+
+    relationship_houses = {
+        5,
+        7,
+        12
+    }
+
+    relationship_items = [
+        item
+        for item in influences
+        if item["house"] in relationship_houses
+    ]
+
+    if relationship_items:
+
+        strongest = max(
+            relationship_items,
+            key=lambda item: item["score"]
+        )
+
+        if strongest["score"] > 0:
+            relationship = (
+                "रिश्तों में संवाद और सहयोग बढ़ाने का अच्छा "
+                "अवसर मिल सकता है।"
+            )
+        else:
+            relationship = (
+                "रिश्तों में प्रतिक्रिया देने से पहले "
+                "दूसरे पक्ष की बात समझना बेहतर रहेगा।"
+            )
+
+    else:
+        relationship = (
+            "रिश्तों में सामान्य स्थिरता बनाए रखने के लिए "
+            "स्पष्ट संवाद उपयोगी रहेगा।"
+        )
+
+    # --------------------------------------------------------
+    # Health
+    # --------------------------------------------------------
+
+    health_houses = {
+        1,
+        6,
+        8,
+        12
+    }
+
+    health_items = [
+        item
+        for item in influences
+        if item["house"] in health_houses
+    ]
+
+    if health_items:
+
+        weakest = min(
+            health_items,
+            key=lambda item: item["score"]
+        )
+
+        if weakest["score"] < 0:
+            health = (
+                "स्वास्थ्य के लिए नियमित दिनचर्या, पर्याप्त "
+                "आराम और तनाव को नियंत्रित करना उपयोगी रहेगा।"
+            )
+        else:
+            health = (
+                "स्वास्थ्य के मामले में नियमित दिनचर्या "
+                "बनाए रखना लाभदायक रहेगा।"
+            )
+
+    else:
+        health = (
+            "स्वास्थ्य के लिए पर्याप्त नींद, संतुलित भोजन "
+            "और नियमित दिनचर्या पर ध्यान दें।"
+        )
+
+    return {
+        "career": career,
+        "finance": finance,
+        "relationship": relationship,
+        "health": health,
+    }
 
 
 # ============================================================
-# DAILY SCRIPT
+# RASHI SCRIPT
 # ============================================================
 
-def build_daily_script(date, positions, events):
-    """
-    Build the complete Hindi daily astrology script.
+def build_rashi_section(summary):
 
-    The resulting script is designed to be consumed by the
-    future video engine and Hindi voice engine.
-    """
+    rashi = summary[
+        "rashi"
+    ]
+
+    score = summary[
+        "score"
+    ]
+
+    lines = []
+
+    lines.append(
+        f"{rashi} राशि"
+    )
+
+    lines.append(
+        rashi_label(score) + "।"
+    )
+
+    # Select the most meaningful influences.
+    influences = sorted(
+        summary["influences"],
+        key=lambda item: (
+            abs(item["score"]),
+            PLANET_PRIORITY.get(
+                item["planet"],
+                1
+            )
+        ),
+        reverse=True
+    )
+
+    selected = influences[:3]
+
+    for item in selected:
+
+        text = clean_text(
+            item["text"]
+        )
+
+        if text:
+            lines.append(
+                text
+            )
+
+    categories = category_advice(
+        summary
+    )
+
+    lines.append(
+        "करियर: " +
+        categories["career"]
+    )
+
+    lines.append(
+        "धन: " +
+        categories["finance"]
+    )
+
+    lines.append(
+        "रिश्ते: " +
+        categories["relationship"]
+    )
+
+    lines.append(
+        "स्वास्थ्य: " +
+        categories["health"]
+    )
+
+    # Daily advice.
+    if score >= 5:
+
+        advice = (
+            "आज मिले अवसरों का उपयोग करें, लेकिन "
+            "अति-आत्मविश्वास से बचें।"
+        )
+
+    elif score <= -5:
+
+        advice = (
+            "आज बड़े निर्णयों में धैर्य रखें और "
+            "अनावश्यक जोखिम से बचें।"
+        )
+
+    else:
+
+        advice = (
+            "आज संतुलित दृष्टिकोण रखें और महत्वपूर्ण "
+            "निर्णय सोच-समझकर लें।"
+        )
+
+    lines.append(
+        "आज की सलाह: " +
+        advice
+    )
+
+    return lines
+
+
+# ============================================================
+# MAIN SCRIPT BUILDER
+# ============================================================
+
+def build_daily_script(
+    date,
+    positions,
+    events
+):
 
     lines = []
 
@@ -177,33 +465,22 @@ def build_daily_script(date, positions, events):
     # --------------------------------------------------------
 
     lines.append(
-        "नमस्कार! स्वागत है आपके आज के दैनिक वैदिक "
-        "ज्योतिष अपडेट में।"
+        "नमस्कार! स्वागत है आपके आज के दैनिक "
+        "वैदिक ज्योतिष अपडेट में।"
     )
 
     lines.append(
-        "आज हम देखेंगे वर्तमान ग्रह स्थिति, महत्वपूर्ण "
-        "गोचर और चंद्र राशि के आधार पर सभी बारह राशियों "
-        "पर उनके संभावित प्रभाव।"
+        "आज हम चंद्र राशि के आधार पर बारह राशियों "
+        "के लिए वर्तमान ग्रह गोचर का संक्षिप्त "
+        "विश्लेषण करेंगे।"
     )
-
-    # --------------------------------------------------------
-    # DATE
-    # --------------------------------------------------------
-
-    if isinstance(date, datetime):
-        date_text = date.strftime(
-            "%d-%m-%Y"
-        )
-    else:
-        date_text = str(date)
 
     lines.append(
-        f"आज की तारीख है {date_text}।"
+        f"आज की तारीख है {date_text(date)}।"
     )
 
     # --------------------------------------------------------
-    # PLANETARY POSITIONS
+    # CURRENT PLANETS
     # --------------------------------------------------------
 
     lines.append(
@@ -211,16 +488,19 @@ def build_daily_script(date, positions, events):
     )
 
     for position in positions:
+
         lines.append(
-            format_position(position)
+            format_position(
+                position
+            )
         )
 
     # --------------------------------------------------------
-    # IMPORTANT TRANSITIONS
+    # TRANSIT EVENTS
     # --------------------------------------------------------
 
     lines.append(
-        "अब बात करते हैं आज के महत्वपूर्ण ग्रह परिवर्तनों की।"
+        "आज के महत्वपूर्ण ग्रह परिवर्तन।"
     )
 
     lines.extend(
@@ -232,11 +512,10 @@ def build_daily_script(date, positions, events):
     # --------------------------------------------------------
 
     lines.append(
-        "अब शुरू करते हैं बारह राशियों का संक्षिप्त "
-        "वैदिक गोचर विश्लेषण।"
+        "अब जानते हैं बारह राशियों पर इन गोचर का प्रभाव।"
     )
 
-    rashi_results = []
+    summaries = []
 
     for rashi_index in range(12):
 
@@ -245,125 +524,80 @@ def build_daily_script(date, positions, events):
             positions
         )
 
-        rashi_results.append(
+        summaries.append(
             summary
         )
 
     # --------------------------------------------------------
-    # MOST IMPORTANT RASHIS
+    # ALL RASHIS
     # --------------------------------------------------------
 
-    positive_rashis = sorted(
-        rashi_results,
+    for summary in summaries:
+
+        lines.extend(
+            build_rashi_section(
+                summary
+            )
+        )
+
+        lines.append(
+            ""
+        )
+
+    # --------------------------------------------------------
+    # OVERALL TREND
+    # --------------------------------------------------------
+
+    ranked = sorted(
+        summaries,
         key=lambda item: item["score"],
         reverse=True
     )
 
-    cautious_rashis = sorted(
-        rashi_results,
-        key=lambda item: item["score"]
-    )
-
-    # --------------------------------------------------------
-    # ALL 12 RASHIS
-    # --------------------------------------------------------
-
-    for summary in rashi_results:
-
-        rashi = summary["rashi"]
-
-        score = summary["score"]
-
-        label = overall_rashi_label(
-            score
-        )
-
-        # IMPORTANT:
-        # Keep Hindi text outside the Python expression.
-        # This avoids the previous SyntaxError.
-        lines.append(
-            "{} राशि - {}।".format(
-                rashi,
-                label
-            )
-        )
-
-        # Take the two strongest influences.
-        influences = sorted(
-            summary["influences"],
-            key=importance_score,
-            reverse=True
-        )
-
-        selected = influences[:2]
-
-        for influence in selected:
-
-            text = short_influence_text(
-                influence
-            )
-
-            if text:
-                lines.append(
-                    text
-                )
-
-    # --------------------------------------------------------
-    # BEST RASHIS
-    # --------------------------------------------------------
-
-    best = [
+    favourable = [
         item["rashi"]
-        for item in positive_rashis[:3]
-        if item["score"] > 0
-    ]
+        for item in ranked
+        if item["score"] >= 5
+    ][:3]
 
-    if best:
-
-        lines.append(
-            "आज के गोचर में अपेक्षाकृत बेहतर संकेत "
-            "{} राशि के लिए दिखाई दे रहे हैं।".format(
-                ", ".join(best)
-            )
-        )
-
-    # --------------------------------------------------------
-    # CAUTION RASHIS
-    # --------------------------------------------------------
-
-    caution = [
+    cautious = [
         item["rashi"]
-        for item in cautious_rashis[:3]
-        if item["score"] < 0
-    ]
+        for item in reversed(ranked)
+        if item["score"] <= -5
+    ][:3]
 
-    if caution:
+    if favourable:
 
         lines.append(
-            "वहीं {} राशि वालों को "
-            "आज जल्दबाजी से बचते हुए निर्णय लेने की सलाह है।".format(
-                ", ".join(caution)
-            )
+            "आज अपेक्षाकृत अनुकूल संकेत "
+            + ", ".join(favourable)
+            + " राशि के लिए दिखाई दे रहे हैं।"
+        )
+
+    if cautious:
+
+        lines.append(
+            "वहीं "
+            + ", ".join(cautious)
+            + " राशि वालों को आज विशेष धैर्य और "
+            "सावधानी रखने की सलाह दी जाती है।"
         )
 
     # --------------------------------------------------------
-    # GENERAL ADVICE
+    # DISCLAIMER
     # --------------------------------------------------------
 
     lines.append(
-        "याद रखें, दैनिक गोचर सामान्य संकेत देता है। "
-        "व्यक्तिगत फलादेश के लिए जन्म तिथि, जन्म समय, "
-        "जन्म स्थान और पूरी जन्म कुंडली का अध्ययन आवश्यक होता है।"
+        "ध्यान रखें, यह विश्लेषण सामान्य चंद्र राशि "
+        "आधारित दैनिक गोचर पर आधारित है। व्यक्तिगत "
+        "फलादेश के लिए जन्म तिथि, जन्म समय, जन्म स्थान "
+        "और पूरी जन्म कुंडली का अध्ययन आवश्यक होता है।"
     )
 
-    # --------------------------------------------------------
-    # DISCLAIMER / RESPONSIBLE CONTENT
-    # --------------------------------------------------------
-
     lines.append(
-        "इन ज्योतिषीय संकेतों को निश्चित भविष्यवाणी के "
-        "बजाय पारंपरिक वैदिक ज्योतिष के मार्गदर्शन के रूप "
-        "में देखें।"
+        "इन संकेतों को पारंपरिक वैदिक ज्योतिष के "
+        "मार्गदर्शन के रूप में देखें, निश्चित भविष्यवाणी "
+        "के रूप में नहीं।"
     )
 
     # --------------------------------------------------------
@@ -371,8 +605,9 @@ def build_daily_script(date, positions, events):
     # --------------------------------------------------------
 
     lines.append(
-        "अगर आपको यह दैनिक वैदिक ज्योतिष अपडेट उपयोगी लगा, "
-        "तो चैनल को सब्सक्राइब करें और वीडियो को लाइक करें।"
+        "अगर आपको यह दैनिक वैदिक ज्योतिष अपडेट उपयोगी "
+        "लगा हो तो चैनल को सब्सक्राइब करें और वीडियो "
+        "को लाइक करें।"
     )
 
     lines.append(
