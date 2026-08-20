@@ -116,19 +116,21 @@ def premium_intro(script):
     logo = _load_master_logo(900, 900)
     canvas.alpha_composite(logo, ((base.W-logo.width)//2, 610-logo.height//2))
 
-    _center_text(d, "दैनिक वैदिक ज्योतिष", 1080, base.W-120, 62, CREAM, 40)
+    # Lower the title and the information stack together so the typography
+    # reads as one coherent block beneath the hero logo.
+    _center_text(d, "दैनिक वैदिक ज्योतिष", 1110, base.W-120, 62, CREAM, 40)
     date = next((x.strip() for x in script.splitlines() if x.strip().startswith("आज ")), "आज का दैनिक राशिफल")
-    _panel(d, (55,1170,base.W-55,1255), 26)
-    _center_text(d, date, 1192, base.W-140, 34, CREAM, 22)
+    _panel(d, (55,1200,base.W-55,1285), 26)
+    _center_text(d, date, 1222, base.W-140, 34, CREAM, 22)
 
     transition = next((x.strip() for x in script.splitlines() if "गोचर" in x or "प्रवेश" in x), "आज के प्रमुख ग्रह गोचर के संकेत")
-    _panel(d, (55,1290,base.W-55,1515), 30)
-    _center_text(d, "आज का प्रमुख गोचर", 1320, base.W-120, 34, GOLD, 24)
-    y = 1372
+    _panel(d, (55,1320,base.W-55,1545), 30)
+    _center_text(d, "आज का प्रमुख गोचर", 1350, base.W-120, 34, GOLD, 24)
+    y = 1402
     for line in base.wrap(transition, 44)[:2]:
         _center_text(d, line, y, base.W-130, 30, CREAM, 22)
         y += 48
-    _center_text(d, "बारहों राशियों के लिए आज के ग्रह संकेत", 1585, base.W-100, 30, GOLD_SOFT, 20)
+    _center_text(d, "बारहों राशियों के लिए आज के ग्रह संकेत", 1615, base.W-100, 30, GOLD_SOFT, 20)
     return _save(canvas, out)
 
 
@@ -169,19 +171,25 @@ def premium_rashi(index, key, label, deity, image_path, narration):
         d.text((left+(right-left-(b[2]-b[0]))/2,1192), text, font=f, fill=GOLD_SOFT)
 
     tone = _tone(narration)
-    _panel(d, (40,1270,base.W-40,1515), 32)
+    # Give the insight block enough height for three aligned rows. The previous
+    # 245px panel caused the third row to crowd the lower boundary.
+    _panel(d, (40,1270,base.W-40,1580), 32)
     _center_text(d, "आज का संकेत", 1295, base.W-140, 30, GOLD, 22)
     _center_text(d, tone, 1340, base.W-140, 30, CREAM, 22)
     cues = _short_cues(narration)
-    y = 1400
+    y = 1395
+    cue_left = 125
+    cue_right = base.W - 75
     for i, cue in enumerate(cues):
+        # All three insight rows use one fixed text column. This prevents the
+        # text from jumping left/right according to string length and keeps it
+        # visually aligned with the bullet rail on every Rashi.
         d.ellipse((82,y+12,96,y+26), fill=GOLD)
-        f = base.fit(d, cue, base.W-150, 29, 21)
-        b = d.textbbox((0,0), cue, font=f)
-        d.text(((base.W-(b[2]-b[0]))/2+10,y), cue, font=f, fill=CREAM)
+        f = base.fit(d, cue, cue_right-cue_left, 29, 21)
+        d.text((cue_left,y), cue, font=f, fill=CREAM)
         if i < 2:
-            d.line((110,y+58,base.W-110,y+58), fill=(247,202,77,65), width=1)
-        y += 52
+            d.line((110,y+48,base.W-110,y+48), fill=(247,202,77,65), width=1)
+        y += 58
 
     # No deity caption, no legacy footer, no retyped English brand text.
     return _save(canvas, out)
