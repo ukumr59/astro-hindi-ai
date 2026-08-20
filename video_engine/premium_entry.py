@@ -96,8 +96,6 @@ def _intro_background():
     canvas = Image.new("RGBA", (base.W, base.H), DARK)
     d = ImageDraw.Draw(canvas)
     cx, cy = base.W // 2, 610
-    # The largest 1000px circle is the logo stage. Supporting rings are
-    # intentionally restrained so the supplied logo remains dominant.
     for r, alpha in ((500, 34), (440, 42), (380, 50)):
         d.ellipse((cx-r, cy-r, cx+r, cy+r), outline=(247, 202, 77, alpha), width=3)
     d.ellipse((cx-455, cy-455, cx+455, cy+455), fill=(17, 5, 25, 205), outline=GOLD_SOFT, width=3)
@@ -111,18 +109,12 @@ def premium_intro(script):
     canvas = _intro_background()
     d = ImageDraw.Draw(canvas)
     d.rounded_rectangle((20,20,base.W-20,base.H-20), radius=44, outline=GOLD, width=4)
-
-    # Exact master logo fills the primary circle; no second logo is present.
     logo = _load_master_logo(900, 900)
     canvas.alpha_composite(logo, ((base.W-logo.width)//2, 610-logo.height//2))
-
-    # Lower the title and the information stack together so the typography
-    # reads as one coherent block beneath the hero logo.
     _center_text(d, "दैनिक वैदिक ज्योतिष", 1110, base.W-120, 62, CREAM, 40)
     date = next((x.strip() for x in script.splitlines() if x.strip().startswith("आज ")), "आज का दैनिक राशिफल")
     _panel(d, (55,1200,base.W-55,1285), 26)
     _center_text(d, date, 1222, base.W-140, 34, CREAM, 22)
-
     transition = next((x.strip() for x in script.splitlines() if "गोचर" in x or "प्रवेश" in x), "आज के प्रमुख ग्रह गोचर के संकेत")
     _panel(d, (55,1320,base.W-55,1545), 30)
     _center_text(d, "आज का प्रमुख गोचर", 1350, base.W-120, 34, GOLD, 24)
@@ -149,49 +141,40 @@ def premium_rashi(index, key, label, deity, image_path, narration):
     canvas = base.background()
     d = ImageDraw.Draw(canvas)
     _header(canvas)
-
-    hero_box = (32, 300, base.W-32, 1030)
+    hero_box = (32, 300, base.W-32, 1045)
     with Image.open(image_path) as im:
         _hero_with_anchor(canvas, im, hero_box, profile["hero_anchor"], radius=36)
     d.rounded_rectangle(hero_box, radius=36, outline=GOLD, width=3)
 
-    # Data-driven identity rail: every rashi is distinct without introducing
-    # a new brand asset or changing the approved visual language.
-    badge = f"{index:02d}  •  {label}"
-    _panel(d, (40,1060,base.W-40,1148), 28)
-    _center_text(d, badge, 1082, base.W-140, 44, CREAM, 28)
+    _panel(d, (40,1075,base.W-40,1168), 28)
+    # Avoid Unicode bullets that can render as tofu on the CI font.
+    title = f"{index:02d}   {label}"
+    _center_text(d, title, 1096, base.W-140, 44, CREAM, 28)
 
-    element = f"तत्व  •  {profile['element']}"
-    planet = f"स्वामी  •  {profile['planet']}"
-    chips = [(element, 65, 1175, 515), (planet, 565, 1175, 1015)]
+    element = f"तत्व  —  {profile['element']}"
+    planet = f"स्वामी  —  {profile['planet']}"
+    chips = [(element, 65, 1192, 515), (planet, 565, 1192, 1015)]
     for text, left, top, right in chips:
-        d.rounded_rectangle((left,top,right,1240), radius=24, fill=(52,18,49,245), outline=(247,202,77,150), width=2)
+        d.rounded_rectangle((left,top,right,1262), radius=24, fill=(52,18,49,245), outline=(247,202,77,150), width=2)
         f = base.fit(d, text, right-left-28, 25, 19)
         b = d.textbbox((0,0), text, font=f)
-        d.text((left+(right-left-(b[2]-b[0]))/2,1192), text, font=f, fill=GOLD_SOFT)
+        d.text((left+(right-left-(b[2]-b[0]))/2,1212), text, font=f, fill=GOLD_SOFT)
 
     tone = _tone(narration)
-    # Give the insight block enough height for three aligned rows. The previous
-    # 245px panel caused the third row to crowd the lower boundary.
-    _panel(d, (40,1270,base.W-40,1580), 32)
-    _center_text(d, "आज का संकेत", 1295, base.W-140, 30, GOLD, 22)
-    _center_text(d, tone, 1340, base.W-140, 30, CREAM, 22)
+    _panel(d, (40,1292,base.W-40,1740), 32)
+    _center_text(d, "आज का संकेत", 1320, base.W-140, 34, GOLD, 24)
+    _center_text(d, tone, 1368, base.W-140, 32, CREAM, 24)
     cues = _short_cues(narration)
-    y = 1395
+    y = 1435
     cue_left = 125
     cue_right = base.W - 75
     for i, cue in enumerate(cues):
-        # All three insight rows use one fixed text column. This prevents the
-        # text from jumping left/right according to string length and keeps it
-        # visually aligned with the bullet rail on every Rashi.
-        d.ellipse((82,y+12,96,y+26), fill=GOLD)
-        f = base.fit(d, cue, cue_right-cue_left, 29, 21)
+        d.ellipse((82,y+13,96,y+27), fill=GOLD)
+        f = base.fit(d, cue, cue_right-cue_left, 31, 23)
         d.text((cue_left,y), cue, font=f, fill=CREAM)
         if i < 2:
-            d.line((110,y+48,base.W-110,y+48), fill=(247,202,77,65), width=1)
-        y += 58
-
-    # No deity caption, no legacy footer, no retyped English brand text.
+            d.line((110,y+58,base.W-110,y+58), fill=(247,202,77,70), width=1)
+        y += 88
     return _save(canvas, out)
 
 
@@ -200,7 +183,6 @@ def premium_outro():
     canvas = Image.new("RGBA", (base.W, base.H), DARK)
     d = ImageDraw.Draw(canvas)
     d.rounded_rectangle((20,20,base.W-20,base.H-20), radius=44, outline=GOLD, width=4)
-    # Reuse the same protected header treatment; branding never diverges.
     _header(canvas)
     _center_text(d, "शुभम् भवतु", 620, base.W-150, 70, CREAM, 44)
     for y, line in zip((805,885,965), ["आपका दिन शुभ और मंगलमय हो", "ईश्वर की कृपा आपके साथ रहे", "कल फिर मिलेंगे नए ग्रह संकेतों के साथ"]):
@@ -210,15 +192,11 @@ def premium_outro():
 
 
 def premium_motion(ffmpeg, scene, seconds, index):
-    """Render restrained continuous motion from data-driven scene profiles.
-
-    A scale-plus-linear-pan is used instead of zoompan so the GitHub runner has
-    a predictable FFmpeg filter graph. Every segment also receives a soft fade.
-    """
+    """Render restrained continuous motion from data-driven scene profiles."""
     out = base.SCENES / f"motion_{index:02d}.mp4"
     seconds = max(0.5, float(seconds))
     frames = max(2, int(round(seconds * base.FPS)))
-    if index == 0:
+    if index == 0 or index == len(base.RASHIS) + 1:
         profile = MOTION["intro"]
     else:
         key = base.RASHIS[index-1][0]
@@ -228,8 +206,6 @@ def premium_motion(ffmpeg, scene, seconds, index):
     sh = int(base.H * scale) // 2 * 2
     sx, sy = profile["start"]
     ex, ey = profile["end"]
-    # n is the current frame in FFmpeg's crop expression. The positions stay
-    # bounded between 0 and 1, so the crop can never leave the scaled canvas.
     x = f"(in_w-out_w)*({sx:.4f}+({ex:.4f}-{sx:.4f})*n/{frames-1})"
     y = f"(in_h-out_h)*({sy:.4f}+({ey:.4f}-{sy:.4f})*n/{frames-1})"
     fade = min(0.30, max(0.12, seconds/8))
