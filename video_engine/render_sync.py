@@ -1,8 +1,8 @@
-"""Audio-led devotional renderer.
+"""Audio-led devotional renderer for AstroPratidin.
 
 The narration audio is the master timeline: every visual scene gets exactly
-one TTS segment's measured duration. This renderer avoids zoompan because
-FFmpeg filter parsing is fragile with nested comma expressions.
+one TTS segment's measured duration. Visuals never advance independently of
+what is being narrated.
 """
 from pathlib import Path
 import asyncio
@@ -12,7 +12,7 @@ import subprocess
 
 import edge_tts
 import imageio_ffmpeg
-from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps, ImageFont
+from PIL import Image, ImageDraw, ImageEnhance, ImageOps, ImageFont, ImageFilter
 
 OUT = Path("output")
 SCENES = OUT / "video_scenes"
@@ -121,185 +121,329 @@ def split_script(script):
 
 
 def reset_outputs():
-    OUT.mkdir(exist_ok=True); SCENES.mkdir(exist_ok=True); SEGDIR.mkdir(exist_ok=True)
-    for p in list(SCENES.glob("*")) + list(SEGDIR.glob("*") ):
-        if p.is_file(): p.unlink()
+    OUT.mkdir(exist_ok=True)
+    SCENES.mkdir(exist_ok=True)
+    SEGDIR.mkdir(exist_ok=True)
+    for p in list(SCENES.glob("*")) + list(SEGDIR.glob("*")):
+        if p.is_file():
+            p.unlink()
     for p in (VIDEO, VOICE, MANIFEST, POSTER):
-        if p.exists(): p.unlink()
+        if p.exists():
+            p.unlink()
 
 
 def validate_assets():
-    if not FONT_PATH.exists(): raise RuntimeError(f"Missing bundled Devanagari font: {FONT_PATH}")
+    if not FONT_PATH.exists():
+        raise RuntimeError(f"Missing bundled Devanagari font: {FONT_PATH}")
     result = {}
     for deity, filename in DEITIES.items():
         path = DEITY_ROOT / filename
-        if not path.exists(): raise RuntimeError(f"Missing deity artwork: {path}")
+        if not path.exists():
+            raise RuntimeError(f"Missing deity artwork: {path}")
         with Image.open(path) as image:
             image = ImageOps.exif_transpose(image)
             print(f"Deity asset: {deity} -> {path} {image.size}")
-            if min(image.size) < 1200: raise RuntimeError(f"Deity artwork below 1200px: {path} -> {image.size}")
+            if min(image.size) < 1200:
+                raise RuntimeError(f"Artwork below 1200px: {path} -> {image.size}")
         result[deity] = path
-    if not INTRO_ASSET.exists(): raise RuntimeError(f"Missing intro artwork: {INTRO_ASSET}")
+    if not INTRO_ASSET.exists():
+        raise RuntimeError(f"Missing intro artwork: {INTRO_ASSET}")
     return result
 
 
-def font(size): return ImageFont.truetype(str(FONT_PATH), size)
+def font(size):
+    return ImageFont.truetype(str(FONT_PATH), size)
 
 
 def wrap(text, limit=38):
     result, current = [], ""
     for word in text.split():
         candidate = word if not current else current + " " + word
-        if len(candidate) <= limit: current = candidate
+        if len(candidate) <= limit:
+            current = candidate
         else:
-            if current: result.append(current)
+            if current:
+                result.append(current)
             current = word
-    if current: result.append(current)
+    if current:
+        result.append(current)
     return result
 
 
 def fit(draw, text, max_width, size, minimum=20):
     for n in range(size, minimum - 1, -2):
-        f = font(n); b = draw.textbbox((0, 0), text, font=f)
-        if b[2] - b[0] <= max_width: return f
+        f = font(n)
+        b = draw.textbbox((0, 0), text, font=f)
+        if b[2] - b[0] <= max_width:
+            return f
     return font(minimum)
 
 
-def background(): return Image.new("RGBA", (W, H), (18, 5, 30, 255))
+def background():
+    return Image.new("RGBA", (W, H), (18, 5, 30, 255))
 
 
 def crop_cover(img, width, height):
     img = ImageOps.exif_transpose(img.convert("RGB"))
     scale = max(width / img.width, height / img.height)
     resized = img.resize((int(img.width * scale), int(img.height * scale)), Image.Resampling.LANCZOS)
-    left = max(0, (resized.width - width) // 2); top = max(0, (resized.height - height) // 2)
+    left = max(0, (resized.width - width) // 2)
+    top = max(0, (resized.height - height) // 2)
     return resized.crop((left, top, left + width, top + height))
 
 
-def put_hero(canvas, source, box):
-    left, top, right, bottom = box; width, height = right-left, bottom-top
+def put_hero(canvas, source, box, radius=34):
+    """Place the actual deity artwork edge-to-edge in the hero panel.
+
+    No mirrored copy, no blurred duplicate, and no deity-name caption is
+    generated. EXIF orientation is respected before cropping.
+    """
+    left, top, right, bottom = box
+    width, height = right - left, bottom - top
     image = crop_cover(source, width, height)
-    image = ImageEnhance.Color(image).enhance(1.12); image = ImageEnhance.Contrast(image).enhance(1.05)
+    image = ImageEnhance.Color(image).enhance(1.10)
+    image = ImageEnhance.Contrast(image).enhance(1.04)
     mask = Image.new("L", (width, height), 0)
-    ImageDraw.Draw(mask).rounded_rectangle((0, 0, width-1, height-1), radius=40, fill=255)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, width - 1, height - 1), radius=radius, fill=255)
     canvas.paste(image, (left, top), mask)
 
 
 def intro(script):
     output = SCENES / "000_intro.jpg"
     source = ImageOps.exif_transpose(Image.open(INTRO_ASSET).convert("RGB"))
-    hero = crop_cover(source, W-100, 1030); canvas = background()
-    gold=(247,202,77,255); cream=(255,244,214,255); dark=(28,5,31,240)
-    blurred=hero.filter(ImageFilter.GaussianBlur(26)).convert("RGBA"); blurred.putalpha(105)
-    canvas.alpha_composite(blurred,(50,90)); canvas.alpha_composite(hero.convert("RGBA"),(50,90))
-    draw=ImageDraw.Draw(canvas); draw.rounded_rectangle((24,24,W-24,H-24),radius=42,outline=gold,width=4)
-    title="॥ दैनिक वैदिक ज्योतिष ॥"; title_font=fit(draw,title,W-120,64,40); box=draw.textbbox((0,0),title,font=title_font)
-    draw.text(((W-box[2]+box[0])/2,1185),title,font=title_font,fill=cream)
-    date=next((line.strip() for line in script.splitlines() if line.strip().startswith("आज ")),"आज का दैनिक राशिफल")
-    date_font=fit(draw,date,W-140,38,24); draw.rounded_rectangle((65,1275,W-65,1360),radius=28,fill=dark,outline=gold,width=2)
-    box=draw.textbbox((0,0),date,font=date_font); draw.text(((W-box[2]+box[0])/2,1298),date,font=date_font,fill=cream)
-    transition=next((line.strip() for line in script.splitlines() if "गोचर" in line or "प्रवेश" in line),"")
+    canvas = background()
+    gold = (247, 202, 77, 255)
+    cream = (255, 244, 214, 255)
+    dark = (28, 5, 31, 238)
+
+    # Full-width devotional hero: one correctly oriented image only.
+    hero = crop_cover(source, W - 70, 1035)
+    canvas.alpha_composite(hero.convert("RGBA"), (35, 55))
+    draw = ImageDraw.Draw(canvas)
+    draw.rounded_rectangle((22, 22, W - 22, H - 22), radius=44, outline=gold, width=4)
+    draw.rounded_rectangle((35, 55, W - 35, 1090), radius=34, outline=(247, 202, 77, 190), width=2)
+
+    title = "॥ दैनिक वैदिक ज्योतिष ॥"
+    title_font = fit(draw, title, W - 120, 62, 40)
+    box = draw.textbbox((0, 0), title, font=title_font)
+    draw.text(((W - box[2] + box[0]) / 2, 1130), title, font=title_font, fill=cream)
+
+    date = next((line.strip() for line in script.splitlines() if line.strip().startswith("आज ")), "आज का दैनिक राशिफल")
+    date_font = fit(draw, date, W - 140, 38, 24)
+    draw.rounded_rectangle((55, 1215, W - 55, 1300), radius=28, fill=dark, outline=gold, width=2)
+    box = draw.textbbox((0, 0), date, font=date_font)
+    draw.text(((W - box[2] + box[0]) / 2, 1237), date, font=date_font, fill=cream)
+
+    transition = next((line.strip() for line in script.splitlines() if "गोचर" in line or "प्रवेश" in line), "")
     if transition:
-        draw.rounded_rectangle((55,1395,W-55,1615),radius=30,fill=dark,outline=gold,width=2); y=1420
-        for line in wrap("आज का प्रमुख गोचर : "+transition,42)[:4]:
-            line_font=fit(draw,line,W-130,30,22); box=draw.textbbox((0,0),line,font=line_font)
-            draw.text(((W-box[2]+box[0])/2,y),line,font=line_font,fill=cream); y+=48
-    hook="ॐ  •  आस्था  •  ग्रह गोचर  •  शुभ संकेत  •  ॐ"; hook_font=fit(draw,hook,W-100,30,20); box=draw.textbbox((0,0),hook,font=hook_font)
-    draw.text(((W-box[2]+box[0])/2,1660),hook,font=hook_font,fill=gold)
-    subtitle="बारहों राशियों के लिए आज के ग्रह संकेत"; subtitle_font=fit(draw,subtitle,W-100,28,20); box=draw.textbbox((0,0),subtitle,font=subtitle_font)
-    draw.text(((W-box[2]+box[0])/2,1770),subtitle,font=subtitle_font,fill=cream)
-    canvas.convert("RGB").save(output,"JPEG",quality=98,subsampling=0); return output
+        draw.rounded_rectangle((55, 1330, W - 55, 1555), radius=30, fill=dark, outline=gold, width=2)
+        y = 1360
+        for line in wrap("आज का प्रमुख गोचर : " + transition, 42)[:4]:
+            line_font = fit(draw, line, W - 130, 30, 22)
+            box = draw.textbbox((0, 0), line, font=line_font)
+            draw.text(((W - box[2] + box[0]) / 2, y), line, font=line_font, fill=cream)
+            y += 48
+
+    hook = "ॐ  •  आस्था  •  ग्रह गोचर  •  शुभ संकेत  •  ॐ"
+    hook_font = fit(draw, hook, W - 100, 30, 20)
+    box = draw.textbbox((0, 0), hook, font=hook_font)
+    draw.text(((W - box[2] + box[0]) / 2, 1620), hook, font=hook_font, fill=gold)
+    subtitle = "बारहों राशियों के लिए आज के ग्रह संकेत"
+    subtitle_font = fit(draw, subtitle, W - 100, 28, 20)
+    box = draw.textbbox((0, 0), subtitle, font=subtitle_font)
+    draw.text(((W - box[2] + box[0]) / 2, 1725), subtitle, font=subtitle_font, fill=cream)
+
+    canvas.convert("RGB").save(output, "JPEG", quality=98, subsampling=0)
+    return output
 
 
 def rashi_scene(index, key, label, deity, image_path, narration):
-    output=SCENES/f"{index:03d}_{key}.jpg"; canvas=background(); draw=ImageDraw.Draw(canvas)
-    gold=(247,202,77,255); cream=(255,244,214,255); dark=(28,5,31,235)
-    with Image.open(image_path) as im: deity_img=ImageOps.exif_transpose(im.convert("RGB"))
-    put_hero(canvas,deity_img,(55,80,W-55,1080))
-    draw.rounded_rectangle((35,35,W-35,H-35),radius=42,outline=gold,width=4)
-    badge=f"{index:02d}  •  {label}"; badge_font=fit(draw,badge,W-100,46,28); box=draw.textbbox((0,0),badge,font=badge_font)
-    draw.rounded_rectangle((70,1120,W-70,1205),radius=28,fill=dark,outline=gold,width=2); draw.text(((W-box[2]+box[0])/2,1138),badge,font=badge_font,fill=cream)
-    deity_line=f"{deity} की कृपा और शुभ संकेत"; df=fit(draw,deity_line,W-120,34,22); box=draw.textbbox((0,0),deity_line,font=df); draw.text(((W-box[2]+box[0])/2,1240),deity_line,font=df,fill=gold)
-    lines=wrap(narration,40)[:8]; y=1310
-    for line in lines:
-        lf=fit(draw,line,W-120,28,20); box=draw.textbbox((0,0),line,font=lf); draw.text(((W-box[2]+box[0])/2,y),line,font=lf,fill=cream); y+=48
-    canvas.convert("RGB").save(output,"JPEG",quality=98,subsampling=0); return output
+    """Create one rashi card whose visual content matches its audio segment.
+
+    The deity image is the dominant visual. The deity's name is intentionally
+    NOT printed underneath the photograph, per the channel design rule.
+    """
+    output = SCENES / f"{index:03d}_{key}.jpg"
+    canvas = background()
+    draw = ImageDraw.Draw(canvas)
+    gold = (247, 202, 77, 255)
+    cream = (255, 244, 214, 255)
+    dark = (28, 5, 31, 238)
+
+    with Image.open(image_path) as im:
+        deity_img = ImageOps.exif_transpose(im.convert("RGB"))
+
+    # Large, clean, single HD deity image. No mirrored/blurred duplicate.
+    put_hero(canvas, deity_img, (35, 55, W - 35, 1065), radius=34)
+    draw.rounded_rectangle((35, 55, W - 35, 1065), radius=34, outline=gold, width=3)
+
+    # Rashi identification only. No deity name below the photograph.
+    badge = f"{index:02d}  •  {label}"
+    badge_font = fit(draw, badge, W - 100, 46, 28)
+    box = draw.textbbox((0, 0), badge, font=badge_font)
+    draw.rounded_rectangle((55, 1110, W - 55, 1195), radius=28, fill=dark, outline=gold, width=2)
+    draw.text(((W - box[2] + box[0]) / 2, 1130), badge, font=badge_font, fill=cream)
+
+    # Decorative devotional divider, not a deity caption.
+    divider = "✦  ॐ  ✦"
+    df = fit(draw, divider, W - 120, 32, 22)
+    box = draw.textbbox((0, 0), divider, font=df)
+    draw.text(((W - box[2] + box[0]) / 2, 1230), divider, font=df, fill=gold)
+
+    # Text is taken from THIS rashi's narration segment, so visual and audio
+    # remain on the same rashi throughout the segment.
+    lines = wrap(narration, 40)
+    y = 1290
+    max_lines = 9
+    for line in lines[:max_lines]:
+        lf = fit(draw, line, W - 120, 28, 20)
+        box = draw.textbbox((0, 0), line, font=lf)
+        draw.text(((W - box[2] + box[0]) / 2, y), line, font=lf, fill=cream)
+        y += 48
+
+    canvas.convert("RGB").save(output, "JPEG", quality=98, subsampling=0)
+    return output
 
 
 def outro():
-    output=SCENES/"013_outro.jpg"; canvas=background(); draw=ImageDraw.Draw(canvas); gold=(247,202,77,255); cream=(255,244,214,255)
-    draw.rounded_rectangle((24,24,W-24,H-24),radius=42,outline=gold,width=4); draw.text((W//2-55,410),"ॐ",font=font(100),fill=gold)
-    title="॥ शुभम् भवतु ॥"; tf=fit(draw,title,W-150,64,42); box=draw.textbbox((0,0),title,font=tf); draw.text(((W-box[2]+box[0])/2,610),title,font=tf,fill=cream)
-    y=800
-    for line in ["आपका दिन शुभ और मंगलमय हो","ईश्वर की कृपा और सकारात्मक ऊर्जा आपके साथ रहे","कल फिर मिलेंगे नए ग्रह संकेतों के साथ"]:
-        lf=fit(draw,line,W-180,34,24); box=draw.textbbox((0,0),line,font=lf); draw.text(((W-box[2]+box[0])/2,y),line,font=lf,fill=cream); y+=75
-    canvas.convert("RGB").save(output,"JPEG",quality=98,subsampling=0); return output
+    output = SCENES / "013_outro.jpg"
+    canvas = background()
+    draw = ImageDraw.Draw(canvas)
+    gold = (247, 202, 77, 255)
+    cream = (255, 244, 214, 255)
+    draw.rounded_rectangle((24, 24, W - 24, H - 24), radius=42, outline=gold, width=4)
+    om = "ॐ"
+    omf = font(100)
+    box = draw.textbbox((0, 0), om, font=omf)
+    draw.text(((W - box[2] + box[0]) / 2, 390), om, font=omf, fill=gold)
+    title = "॥ शुभम् भवतु ॥"
+    tf = fit(draw, title, W - 150, 64, 42)
+    box = draw.textbbox((0, 0), title, font=tf)
+    draw.text(((W - box[2] + box[0]) / 2, 610), title, font=tf, fill=cream)
+    y = 800
+    for line in ["आपका दिन शुभ और मंगलमय हो", "ईश्वर की कृपा और सकारात्मक ऊर्जा आपके साथ रहे", "कल फिर मिलेंगे नए ग्रह संकेतों के साथ"]:
+        lf = fit(draw, line, W - 180, 34, 24)
+        box = draw.textbbox((0, 0), line, font=lf)
+        draw.text(((W - box[2] + box[0]) / 2, y), line, font=lf, fill=cream)
+        y += 75
+    canvas.convert("RGB").save(output, "JPEG", quality=98, subsampling=0)
+    return output
 
 
 def motion(ffmpeg, scene, seconds, index):
-    """Create a stable Ken-Burns-style clip without zoompan.
-
-    The scene is progressively scaled from 1.00x to 1.10x, then center-cropped
-    back to 1080x1920. A small sinusoidal horizontal drift gives gentle motion.
-    All expressions deliberately avoid commas so FFmpeg cannot misparse them.
-    """
-    output=SCENES/f"motion_{index:02d}.mp4"
-    seconds=max(0.5,float(seconds))
-    fade=min(0.28,max(0.10,seconds/6.0)); fade_out_start=max(0.05,seconds-fade)
-    scale_expr=f"ceil({W}*(1+0.10*n/{FPS*seconds:.6f})/2)*2"
-    scale_h_expr=f"ceil({H}*(1+0.10*n/{FPS*seconds:.6f})/2)*2"
-    if index % 2 == 0:
-        drift=f"((iw-{W})/2)+(iw-{W})*0.12*sin(2*PI*n/{FPS*seconds:.6f})"
-    else:
-        drift=f"((iw-{W})/2)-(iw-{W})*0.12*sin(2*PI*n/{FPS*seconds:.6f})"
-    filtergraph=(f"scale=w={scale_expr}:h={scale_h_expr}:eval=frame," 
-                 f"crop={W}:{H}:x={drift}:y=(ih-{H})/2," 
-                 f"fps={FPS},fade=t=in:st=0:d={fade:.3f}," 
-                 f"fade=t=out:st={fade_out_start:.3f}:d={fade:.3f}")
-    run([ffmpeg,"-y","-loop","1","-i",scene,"-vf",filtergraph,"-t",f"{seconds:.3f}","-an",
-         "-c:v","libx264","-preset","veryfast","-crf","19","-pix_fmt","yuv420p",output],900)
+    """Stable per-segment motion without zoompan filter parsing."""
+    output = SCENES / f"motion_{index:02d}.mp4"
+    seconds = max(0.5, float(seconds))
+    fade = min(0.28, max(0.10, seconds / 6.0))
+    fade_out_start = max(0.05, seconds - fade)
+    # Simple scale/crop expressions avoid the malformed nested expressions
+    # that previously caused FFmpeg failures in GitHub Actions.
+    scale_w = int(W * 1.08) // 2 * 2
+    scale_h = int(H * 1.08) // 2 * 2
+    filtergraph = (
+        f"scale={scale_w}:{scale_h}:force_original_aspect_ratio=disable," 
+        f"crop={W}:{H}:x=(iw-{W})/2:y=(ih-{H})/2," 
+        f"fps={FPS},fade=t=in:st=0:d={fade:.3f},"
+        f"fade=t=out:st={fade_out_start:.3f}:d={fade:.3f}"
+    )
+    run([ffmpeg, "-y", "-loop", "1", "-i", scene, "-vf", filtergraph,
+         "-t", f"{seconds:.3f}", "-an", "-c:v", "libx264", "-preset", "veryfast",
+         "-crf", "19", "-pix_fmt", "yuv420p", output], 900)
     return output
 
 
 def concat_video(ffmpeg, clips):
-    output=SCENES/"video_no_audio_sync.mp4"; args=[ffmpeg,"-y"]; labels=[]
-    for index,clip in enumerate(clips): args += ["-i",clip]; labels.append(f"[{index}:v]")
-    args += ["-filter_complex","".join(labels)+f"concat=n={len(clips)}:v=1:a=0[v]","-map","[v]","-c:v","libx264","-preset","veryfast","-crf","19","-pix_fmt","yuv420p",output]
-    run(args,1800); return output
+    output = SCENES / "video_no_audio_sync.mp4"
+    args = [ffmpeg, "-y"]
+    labels = []
+    for index, clip in enumerate(clips):
+        args += ["-i", clip]
+        labels.append(f"[{index}:v]")
+    args += ["-filter_complex", "".join(labels) + f"concat=n={len(clips)}:v=1:a=0[v]",
+             "-map", "[v]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "19",
+             "-pix_fmt", "yuv420p", output]
+    run(args, 1800)
+    return output
 
 
 def concat_audio(ffmpeg, files):
-    args=[ffmpeg,"-y"]; labels=[]
-    for index,path in enumerate(files): args += ["-i",path]; labels.append(f"[{index}:a]")
-    args += ["-filter_complex","".join(labels)+f"concat=n={len(files)}:v=0:a=1[a]","-map","[a]","-c:a","libmp3lame","-b:a","160k",VOICE]
-    run(args,1800)
+    args = [ffmpeg, "-y"]
+    labels = []
+    for index, path in enumerate(files):
+        args += ["-i", path]
+        labels.append(f"[{index}:a]")
+    args += ["-filter_complex", "".join(labels) + f"concat=n={len(files)}:v=0:a=1[a]",
+             "-map", "[a]", "-c:a", "libmp3lame", "-b:a", "160k", VOICE]
+    run(args, 1800)
 
 
-def attach_audio(ffmpeg,silent_video,total):
-    run([ffmpeg,"-y","-i",silent_video,"-i",VOICE,"-map","0:v:0","-map","1:a:0","-c:v","copy","-c:a","aac","-b:a","160k","-t",f"{total:.3f}",VIDEO],1800)
+def attach_audio(ffmpeg, silent_video, total):
+    run([ffmpeg, "-y", "-i", silent_video, "-i", VOICE,
+         "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac",
+         "-b:a", "160k", "-t", f"{total:.3f}", VIDEO], 1800)
 
 
 def main():
-    reset_outputs(); script=load_script(); segments=split_script(script); ffmpeg=imageio_ffmpeg.get_ffmpeg_exe(); deity_paths=validate_assets()
-    audio_files=[]; durations=[]; manifest=[]; cursor=0.0
-    for index,(key,label,text) in enumerate(segments):
-        path=SEGDIR/f"{index:02d}_{key}.mp3"; print(f"TTS {index+1}/14: {label} ({len(text)} chars)"); asyncio.run(speak(text,path)); seconds=media_duration(ffmpeg,path)
-        audio_files.append(path); durations.append(seconds); manifest.append({"index":index,"key":key,"label":label,"start_seconds":round(cursor,3),"end_seconds":round(cursor+seconds,3),"audio_seconds":round(seconds,3),"text":text}); cursor+=seconds
-    concat_audio(ffmpeg,audio_files); total_audio=media_duration(ffmpeg,VOICE)
-    scenes=[intro(script)]
-    for index,(key,label,deity,filename) in enumerate(RASHIS,start=1):
-        narration=next(item[2] for item in segments if item[0]==key)
-        scenes.append(rashi_scene(index,key,label,deity,deity_paths[deity],narration))
+    reset_outputs()
+    script = load_script()
+    segments = split_script(script)
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    deity_paths = validate_assets()
+
+    audio_files = []
+    durations = []
+    manifest = []
+    cursor = 0.0
+    for index, (key, label, text) in enumerate(segments):
+        path = SEGDIR / f"{index:02d}_{key}.mp3"
+        print(f"TTS {index + 1}/14: {label} ({len(text)} chars)")
+        asyncio.run(speak(text, path))
+        seconds = media_duration(ffmpeg, path)
+        audio_files.append(path)
+        durations.append(seconds)
+        manifest.append({
+            "index": index, "key": key, "label": label,
+            "start_seconds": round(cursor, 3),
+            "end_seconds": round(cursor + seconds, 3),
+            "audio_seconds": round(seconds, 3), "text": text,
+        })
+        cursor += seconds
+
+    concat_audio(ffmpeg, audio_files)
+    total_audio = media_duration(ffmpeg, VOICE)
+
+    scenes = [intro(script)]
+    for index, (key, label, deity, filename) in enumerate(RASHIS, start=1):
+        narration = next(item[2] for item in segments if item[0] == key)
+        scenes.append(rashi_scene(index, key, label, deity, deity_paths[deity], narration))
     scenes.append(outro())
-    if len(scenes)!=len(segments): raise RuntimeError(f"Scene/voice count mismatch: {len(scenes)} vs {len(segments)}")
-    clips=[]
-    for index,(scene,seconds) in enumerate(zip(scenes,durations)):
-        manifest[index]["scene"]=str(scene); manifest[index]["scene_seconds"]=round(seconds,3); clips.append(motion(ffmpeg,scene,seconds,index))
-    silent_video=concat_video(ffmpeg,clips); attach_audio(ffmpeg,silent_video,total_audio); total_video=media_duration(ffmpeg,VIDEO); delta=abs(total_video-total_audio)
+    if len(scenes) != len(segments):
+        raise RuntimeError(f"Scene/voice count mismatch: {len(scenes)} vs {len(segments)}")
+
+    clips = []
+    for index, (scene, seconds) in enumerate(zip(scenes, durations)):
+        manifest[index]["scene"] = str(scene)
+        manifest[index]["scene_seconds"] = round(seconds, 3)
+        clips.append(motion(ffmpeg, scene, seconds, index))
+
+    silent_video = concat_video(ffmpeg, clips)
+    attach_audio(ffmpeg, silent_video, total_audio)
+    total_video = media_duration(ffmpeg, VIDEO)
+    delta = abs(total_video - total_audio)
     print(f"AUDIO-LED SYNC: video={total_video:.3f}s audio={total_audio:.3f}s delta={delta:.3f}s")
-    if delta>0.20: raise RuntimeError("FINAL AUDIO/VIDEO SYNC FAILED")
-    Image.open(scenes[0]).save(POSTER,"PNG")
-    MANIFEST.write_text(json.dumps({"renderer":"V8-AUDIO-LED-STABLE","method":"measured-TTS-segment-duration-is-master-timeline","total_audio_seconds":round(total_audio,3),"total_video_seconds":round(total_video,3),"segments":manifest},ensure_ascii=False,indent=2),encoding="utf-8")
+    if delta > 0.20:
+        raise RuntimeError("FINAL AUDIO/VIDEO SYNC FAILED")
+
+    Image.open(scenes[0]).save(POSTER, "PNG")
+    MANIFEST.write_text(json.dumps({
+        "renderer": "V4-AUDIO-LED-DEVOTIONAL",
+        "method": "measured-TTS-segment-duration-is-master-timeline",
+        "total_audio_seconds": round(total_audio, 3),
+        "total_video_seconds": round(total_video, 3),
+        "segments": manifest,
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
     print("PRODUCTION VIDEO COMPLETE")
 
-if __name__=="__main__": main()
+
+if __name__ == "__main__":
+    main()
