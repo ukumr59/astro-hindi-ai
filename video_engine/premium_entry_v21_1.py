@@ -1,4 +1,4 @@
-"""V21.2 production entrypoint with resilient premium motion rendering."""
+"""V21.3 production entrypoint with resilient premium motion rendering."""
 from . import premium_entry as v21
 from . import render_sync as base
 from .visual_profiles import RASHI_PROFILES, MOTION
@@ -13,18 +13,13 @@ def _encode_motion(ffmpeg, scene, out, seconds, profile, *, safe=False):
     sx, sy = profile["start"]
     ex, ey = profile["end"]
 
-    # Use a finite frame count rather than -t. This makes every MP4 segment
-    # deterministic and avoids runner-specific trailer/flush failures.
     if safe:
-        # Guaranteed-safe premium fallback: gentle centered push with fades.
         scale = max(1.04, min(scale, 1.08))
         sw = int(base.W * scale) // 2 * 2
         sh = int(base.H * scale) // 2 * 2
-        x = f"(iw-ow)*0.50"
-        y = f"(ih-oh)*0.50"
+        x = "(iw-ow)*0.50"
+        y = "(ih-oh)*0.50"
     else:
-        # Linear pan is intentionally simple: no nested clip/sin/zoompan
-        # expressions, and coordinates remain in the legal crop range.
         x = f"(iw-ow)*({sx:.4f}+({ex:.4f}-{sx:.4f})*n/{frames-1})"
         y = f"(ih-oh)*({sy:.4f}+({ey:.4f}-{sy:.4f})*n/{frames-1})"
 
@@ -45,9 +40,26 @@ def _encode_motion(ffmpeg, scene, out, seconds, profile, *, safe=False):
     ], 900)
 
 
+def motion_profile(index):
+    """Resolve the 14-scene timeline without indexing past the 12 Rashis.
+
+    Scene 0 is the intro, scenes 1-12 are the canonical Rashis, and scene 13
+    is the outro. The outro deliberately uses the intro's restrained motion
+    profile rather than borrowing a nonexistent 13th Rashi profile.
+    """
+    if index == 0 or index == len(base.RASHIS) + 1:
+        return MOTION["intro"]
+    rashi_index = index - 1
+    if not 0 <= rashi_index < len(base.RASHIS):
+        raise RuntimeError(f"Invalid motion scene index: {index}")
+    key = base.RASHIS[rashi_index][0]
+    profile_name = RASHI_PROFILES[key]["motion"]
+    return MOTION[profile_name]
+
+
 def hardened_motion(ffmpeg, scene, seconds, index):
     out = base.SCENES / f"motion_{index:02d}.mp4"
-    profile = MOTION["intro"] if index == 0 else MOTION[RASHI_PROFILES[base.RASHIS[index - 1][0]]["motion"]]
+    profile = motion_profile(index)
     try:
         _encode_motion(ffmpeg, scene, out, seconds, profile, safe=False)
     except RuntimeError as exc:
