@@ -68,7 +68,7 @@ jobs:
       - name: Generate daily content
         run: python -m astro_engine.main
 
-      - name: Render AstroPratidin V20.1 production
+      - name: Render AstroPratidin V20.2 production
         run: python -m video_engine.premium_entry
 
       - name: Output QA
@@ -76,27 +76,35 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           import json
-          from PIL import Image, ImageChops
+          import numpy as np
+          from PIL import Image
           out=Path('output')
           scenes=sorted((out/'video_scenes').glob('*.jpg'))
           if len(scenes)!=14: raise SystemExit(f'Expected 14 rendered scenes, got {len(scenes)}')
           for p in scenes:
               with Image.open(p) as im:
                   if im.size!=(1080,1920): raise SystemExit(f'Bad dimensions: {p.name} {im.size}')
+
+          # Validate the logo by comparing ONLY pixels covered by the supplied
+          # master logo's alpha mask. The surrounding astrology rings are allowed
+          # to remain visible behind transparent parts of the logo. This avoids
+          # falsely rejecting a correct render because the background differs.
           intro=out/'video_scenes/000_intro.jpg'
           with Image.open(intro).convert('RGB') as im, Image.open('assets/AstroPratidin Logo.png').convert('RGBA') as logo:
               ratio=min(440/logo.width,440/logo.height)
               logo=logo.resize((max(1,int(logo.width*ratio)),max(1,int(logo.height*ratio))),Image.Resampling.LANCZOS)
               x=(1080-logo.width)//2; y=610-logo.height//2
-              expected=Image.new('RGBA',logo.size,(25,7,34,255))
-              expected.alpha_composite(logo)
-              actual=im.crop((x,y,x+logo.width,y+logo.height))
-              # JPEG compression is allowed, but the actual rendered pixels must
-              # remain close to the exact master-logo composite.
-              diff=ImageChops.difference(actual,expected.convert('RGB'))
-              extrema=diff.getextrema()
-              mean=sum((lo+hi)/2 for lo,hi in extrema)/3
-              if mean>22: raise SystemExit(f'Central master-logo visual mismatch: mean diff {mean:.1f}')
+              actual=np.asarray(im.crop((x,y,x+logo.width,y+logo.height)),dtype=np.int16)
+              target=np.asarray(logo.convert('RGB'),dtype=np.int16)
+              alpha=np.asarray(logo.getchannel('A'),dtype=np.uint8)
+              mask=alpha>=128
+              if int(mask.sum()) < 10000: raise SystemExit('Master logo alpha mask unexpectedly small')
+              mae=np.abs(actual[mask]-target[mask]).mean()
+              if mae>32: raise SystemExit(f'Central master-logo visual mismatch: alpha-aware MAE {mae:.1f}')
+              # Require a substantial amount of high-alpha logo material in the
+              # expected central region; this prevents a blank-center false pass.
+              print(f'CENTRAL MASTER LOGO: PASS (alpha-aware MAE {mae:.1f})')
+
           # No legacy footer may survive in generated text/metadata.
           for p in out.rglob('*'):
               if p.is_file() and p.suffix.lower() in {'.md','.txt','.json'}:
@@ -106,7 +114,6 @@ jobs:
           m=json.loads((out/'sync_manifest.json').read_text(encoding='utf-8'))
           if len(m.get('segments',[]))!=14: raise SystemExit('Expected 14 sync segments')
           print('14 SCENES / 1080x1920: PASS')
-          print('CENTRAL MASTER LOGO: PASS')
           print('NO LEGACY FOOTER: PASS')
           print('14-SEGMENT SYNC: PASS')
           print('OUTPUT QA: PASS')
