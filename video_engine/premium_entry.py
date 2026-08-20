@@ -1,14 +1,13 @@
-"""AstroPratidin V21 premium renderer.
+# AstroPratidin V21 premium renderer.
+# Final visual-polish architecture:
+# - Immutable exact AstroPratidin master logo.
+# - One consistent brand grid across intro, Rashi cards and outro.
+# - Data-driven Rashi art direction and motion.
+# - Audio remains the master timeline.
+# - No legacy footer/footnote or duplicate logo artwork.
+# - All text stays inside a shared safe rail.
+# - Display copy is complete and deliberately concise; no ellipsis truncation.
 
-Final visual-polish architecture:
-- Immutable exact AstroPratidin master logo.
-- One consistent brand grid across intro, Rashi cards and outro.
-- Data-driven Rashi art direction and motion.
-- Audio remains the master timeline.
-- No legacy footer/footnote or duplicate logo artwork.
-- All text stays inside a shared safe rail.
-- Display copy is complete and deliberately concise; no ellipsis truncation.
-"""
 from pathlib import Path
 import re
 from PIL import Image, ImageDraw, ImageOps
@@ -62,7 +61,6 @@ def _center_text(d, text, y, max_width, size, fill=CREAM, minimum=20):
 
 
 def _header(canvas):
-    """Shared Rashi/outro header using the exact supplied master logo."""
     d = ImageDraw.Draw(canvas)
     d.rounded_rectangle((28, 26, base.W - 28, 276), radius=34, fill=DARK, outline=GOLD, width=2)
     logo = _load_master_logo(280, 228)
@@ -71,15 +69,11 @@ def _header(canvas):
 
 
 def _split_sentences(narration):
-    return [base.clean(x) for x in re.split(r"(?<=[।!?])\s+", base.clean(narration)) if base.clean(x)]
+    cleaned = base.clean(narration)
+    return [base.clean(x) for x in re.split(r"(?<=[।!?])\s+", cleaned) if base.clean(x)]
 
 
 def _short_cues(narration):
-    """Create three complete, production-ready display cues from the narration.
-
-    The narration can contain long editorial sentences. The visual card deliberately
-    uses concise complete statements so the design never clips or appends ellipses.
-    """
     parts = _split_sentences(narration)
     if parts and re.match(r"^\S+ राशि[।:]", parts[0]):
         parts = parts[1:]
@@ -95,7 +89,6 @@ def _short_cues(narration):
     else:
         action = "काम और धन संबंधी निर्णय सोच-समझकर लें।"
 
-    # Keep the status concise without changing its meaning.
     status = re.sub(r"^आज का दिन कुल मिलाकर\s+", "आज ", status)
     return [status, transit, action]
 
@@ -114,11 +107,8 @@ def _save(canvas, out):
 
 
 def _intro_background():
-    """Minimal brand-safe intro background; the master logo owns the circular geometry."""
     canvas = Image.new("RGBA", (base.W, base.H), DARK)
     d = ImageDraw.Draw(canvas)
-    # Subtle star points only. No independent concentric rings that can conflict
-    # with the exact circular geometry already present in the supplied logo.
     for x, y, r in ((72,330,3),(1004,360,3),(105,820,3),(975,850,3),(92,1085,3),(990,1090,3),(170,1510,2),(910,1510,2)):
         d.ellipse((x-r,y-r,x+r,y+r), fill=GOLD_SOFT)
     return canvas
@@ -130,18 +120,15 @@ def premium_intro(script):
     d = ImageDraw.Draw(canvas)
     d.rounded_rectangle((20,20,base.W-20,base.H-20), radius=44, outline=GOLD, width=4)
 
-    # The approved master logo is the dominant circular visual element.
     logo = _load_master_logo(900, 900)
     canvas.alpha_composite(logo, ((base.W-logo.width)//2, 610-logo.height//2))
 
-    # Keep the requested title lower, while maintaining a coherent vertical stack.
     _center_text(d, "दैनिक वैदिक ज्योतिष", 1138, base.W-140, 62, CREAM, 40)
 
     date = next((x.strip() for x in script.splitlines() if x.strip().startswith("आज ")), "आज का दैनिक राशिफल")
     _panel(d, (55,1220,base.W-55,1306), 26)
     _center_text(d, date, 1242, base.W-150, 34, CREAM, 22)
 
-    # Prefer the actual transit event, not the heading "आज के प्रमुख ग्रह परिवर्तन".
     lines = [x.strip() for x in script.splitlines() if x.strip()]
     transition_candidates = [
         x for x in lines
@@ -251,7 +238,6 @@ def premium_outro():
 
 
 def premium_motion(ffmpeg, scene, seconds, index):
-    """Render restrained continuous motion from data-driven scene profiles."""
     out = base.SCENES / f"motion_{index:02d}.mp4"
     seconds = max(0.5, float(seconds))
     frames = max(2, int(round(seconds * base.FPS)))
