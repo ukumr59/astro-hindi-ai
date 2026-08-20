@@ -52,7 +52,7 @@ jobs:
         run: python -m astro_engine.main
 
       - name: Generate devotional video - AUDIO LED SYNC
-        run: python -m video_engine.render_sync
+        run: python -m video_engine.run_audio_led
 
       - name: Validate generated outputs
         run: |
