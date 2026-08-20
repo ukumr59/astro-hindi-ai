@@ -1,6 +1,8 @@
 name: Daily Astro Hindi Video
 
 on:
+  push:
+    branches: [main]
   schedule:
     # 08:00 IST daily (02:30 UTC)
     - cron: "30 2 * * *"
@@ -67,13 +69,24 @@ jobs:
           import json
           from pathlib import Path
           m = json.loads(Path('output/sync_manifest.json').read_text(encoding='utf-8'))
-          if len(m.get('segments', [])) != 14:
-              raise SystemExit(f"Expected 14 sync segments, got {len(m.get('segments', []))}")
-          if any(float(x.get('audio_seconds', 0)) <= 0 for x in m['segments']):
-              raise SystemExit('One or more synchronized audio segments has zero duration')
-          print('Audio-led sync validation passed: 14 segments')
-          for x in m['segments']:
-              print(f"{x['index']:02d} {x['label']}: {x['audio_seconds']:.2f}s")
+          segments = m.get('segments', [])
+          if len(segments) != 14:
+              raise SystemExit(f'Expected 14 sync segments, got {len(segments)}')
+          if [x.get('key') for x in segments] != ['intro','मेष','वृषभ','मिथुन','कर्क','सिंह','कन्या','तुला','वृश्चिक','धनु','मकर','कुंभ','मीन','outro']:
+              raise SystemExit('Sync manifest is not in canonical Intro -> 12 Rashis -> Outro order')
+          cursor = 0.0
+          for x in segments:
+              sec = float(x.get('audio_seconds', 0))
+              if sec <= 0:
+                  raise SystemExit(f"Zero/negative duration in segment {x.get('label')}")
+              start = float(x.get('start_seconds', cursor))
+              end = float(x.get('end_seconds', start + sec))
+              if abs(start - cursor) > 0.05:
+                  raise SystemExit(f"Timeline gap/overlap before {x.get('label')}: expected {cursor:.3f}, got {start:.3f}")
+              if abs((end - start) - sec) > 0.10:
+                  raise SystemExit(f"Manifest duration mismatch in {x.get('label')}")
+              cursor = end
+          print(f'Audio-led timeline validation passed: 14 contiguous segments, total {cursor:.3f}s')
           PY
           echo "===== GENERATED FILES ====="
           find output -maxdepth 2 -type f -printf '%p %k KB\n' | sort
@@ -82,7 +95,7 @@ jobs:
       - name: Upload daily production bundle
         uses: actions/upload-artifact@v4
         with:
-          name: daily-astro-output
+          name: daily-astro-output-${{ github.run_number }}
           path: |
             output/daily_script.md
             output/planetary_report.txt
