@@ -86,9 +86,6 @@ jobs:
           if set(profiles.MOTION) != {'intro','push_in','drift_right','drift_left'}:
               raise SystemExit('Motion profile coverage mismatch')
 
-          # V21 production is intentionally layered on top of the shared
-          # render_sync primitives. Legacy helpers may remain in that shared
-          # module for compatibility, but they are NOT the active renderer.
           active_files = [
               Path('video_engine/premium_entry.py'),
               Path('video_engine/premium_entry_v21_1.py'),
@@ -106,8 +103,6 @@ jobs:
                   if item in text:
                       raise SystemExit(f'Forbidden legacy content in ACTIVE V21 renderer {path}: {item}')
 
-          # Confirm the production entrypoints actually replace the shared
-          # renderer hooks rather than merely exposing the required functions.
           premium_src = inspect.getsource(premium.main)
           hardened_src = inspect.getsource(hardened.main)
           for needle in ['base.intro = premium_intro', 'base.rashi_scene = premium_rashi', 'base.outro = premium_outro', 'base.motion = premium_motion']:
@@ -123,16 +118,68 @@ jobs:
           print('MOTION + SAR NORMALIZATION CAPABILITY: PASS')
           print('ACTIVE RENDERER LEGACY-CONTENT CHECK: PASS')
           print('PRODUCTION HOOK WIRING: PASS')
-          print('LEGACY COMPATIBILITY FILES EXCLUDED FROM ACTIVE-GATE SCAN: PASS')
           PY
 
       - name: Compile
-        run: python -m py_compile video_engine/render_sync.py video_engine/visual_profiles.py video_engine/premium_entry.py video_engine/premium_entry_v21_1.py
+        run: python -m py_compile video_engine/render_sync.py video_engine/visual_profiles.py video_engine/premium_entry.py video_engine/premium_entry_v21_1.py astro_engine/main.py astro_engine/rules.py content_engine/script.py
 
       - name: Generate daily content
         run: python -m astro_engine.main
 
-      - name: Render AstroPratidin V21.5 premium production
+      - name: Validate Hindi content before render
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          p=Path('output/daily_script.md')
+          if not p.exists(): raise SystemExit('daily_script.md missing')
+          text=p.read_text(encoding='utf-8').strip()
+          if not text: raise SystemExit('daily_script.md is empty')
+
+          rashis=['मेष','वृषभ','मिथुन','कर्क','सिंह','कन्या','तुला','वृश्चिक','धनु','मकर','कुंभ','मीन']
+          lines=[x.strip() for x in text.splitlines() if x.strip()]
+          heading_counts={r:sum(bool(re.match(rf'^{re.escape(r)} राशि(?:[।:]|\s)',x)) for x in lines) for r in rashis}
+          bad=[r for r,n in heading_counts.items() if n!=1]
+          if bad: raise SystemExit(f'Rashi heading coverage invalid: {bad}')
+
+          forbidden=['...','…','□','�','विस्तृत फलादेश आवाज़ में सुनें','विस्तृत फलादेश आपकी आवाज़ में']
+          for token in forbidden:
+              if token in text: raise SystemExit(f'Forbidden/truncated glyph or legacy copy found: {token}')
+
+          starts=[]
+          for i,line in enumerate(lines):
+              for r in rashis:
+                  if re.match(rf'^{re.escape(r)} राशि(?:[।:]|\s)',line):
+                      starts.append((i,r,line))
+          starts.sort()
+          if [r for _,r,_ in starts] != rashis:
+              raise SystemExit('Rashi narration is not in canonical order')
+
+          for i,(pos,r,line) in enumerate(starts):
+              end=starts[i+1][0] if i+1<len(starts) else len(lines)
+              block=' '.join(lines[pos:end])
+              words=block.split()
+              if len(words)<12: raise SystemExit(f'{r} narration too short: {len(words)} words')
+              if len(words)>110: raise SystemExit(f'{r} narration too long: {len(words)} words')
+              if not any(ch in block for ch in '।!?'): raise SystemExit(f'{r} narration has no sentence punctuation')
+              if re.search(r'\b(?:सकारात्मक|नकारात्मक) जल्दबाजी\b',block): raise SystemExit(f'{r} contains contradictory malformed phrase')
+              if re.search(r'\bसे जुड़े मामलों\s*\.\.?$',block): raise SystemExit(f'{r} contains truncated phrase')
+
+          # Catch the exact class of defect that previously escaped rendering:
+          # a sentence fragment created by cutting an influence at an arbitrary word count.
+          fragment_patterns=[r'\b(?:में|का|की|के|और|तथा|से|पर|लिए)\s+\w+\s+करें\s+\w+$', r'\bसकारात्मक\s+जल्दबाजी\b']
+          for pat in fragment_patterns:
+              if re.search(pat,text): raise SystemExit(f'Likely malformed generated Hindi matched: {pat}')
+
+          print('HINDI CONTENT QA: PASS')
+          print('12 RASHIS / CANONICAL ORDER: PASS')
+          print('NO TRUNCATION GLYPHS: PASS')
+          print('NO LEGACY FOOTER: PASS')
+          print('SENTENCE COMPLETENESS: PASS')
+          PY
+
+      - name: Render AstroPratidin V22 premium production
         run: python -m video_engine.premium_entry_v21_1
 
       - name: Output QA
@@ -155,36 +202,25 @@ jobs:
                   if im.size!=(1080,1920): raise SystemExit(f'Bad dimensions: {p.name} {im.size}')
 
           def probe(path):
-              raw=subprocess.check_output([
-                  'ffprobe','-v','error','-select_streams','v:0',
-                  '-show_entries','stream=width,height,sample_aspect_ratio,pix_fmt,nb_frames',
-                  '-of','json',str(path)
-              ],text=True)
+              raw=subprocess.check_output(['ffprobe','-v','error','-select_streams','v:0','-show_entries','stream=width,height,sample_aspect_ratio,pix_fmt,nb_frames','-of','json',str(path)],text=True)
               streams=json.loads(raw).get('streams',[])
               if not streams: raise SystemExit(f'No video stream: {path}')
               return streams[0]
 
           for p in motions:
               st=probe(p)
-              if (st.get('width'),st.get('height'))!=(1080,1920):
-                  raise SystemExit(f'Bad motion dimensions: {p.name} {st.get("width")}x{st.get("height")}')
-              if st.get('sample_aspect_ratio')!='1:1':
-                  raise SystemExit(f'Non-square motion SAR: {p.name} {st.get("sample_aspect_ratio")}')
-              if st.get('pix_fmt')!='yuv420p':
-                  raise SystemExit(f'Unexpected motion pixel format: {p.name} {st.get("pix_fmt")}')
-              if not st.get('nb_frames') or int(st['nb_frames']) < 2:
-                  raise SystemExit(f'Motion clip has insufficient frames: {p.name}')
+              if (st.get('width'),st.get('height'))!=(1080,1920): raise SystemExit(f'Bad motion dimensions: {p.name}')
+              if st.get('sample_aspect_ratio')!='1:1': raise SystemExit(f'Non-square motion SAR: {p.name}')
+              if st.get('pix_fmt')!='yuv420p': raise SystemExit(f'Unexpected motion pixel format: {p.name}')
+              if not st.get('nb_frames') or int(st['nb_frames'])<2: raise SystemExit(f'Motion clip has insufficient frames: {p.name}')
           print('14 MOTION CLIPS / 1080x1920 / SAR 1:1 / yuv420p: PASS')
 
           final=out/'daily_video.mp4'
           if not final.exists(): raise SystemExit('Final video missing')
           st=probe(final)
-          if (st.get('width'),st.get('height'))!=(1080,1920):
-              raise SystemExit(f'Final video dimensions invalid: {st.get("width")}x{st.get("height")}')
-          if st.get('sample_aspect_ratio')!='1:1':
-              raise SystemExit(f'Final video SAR invalid: {st.get("sample_aspect_ratio")}')
-          if st.get('pix_fmt')!='yuv420p':
-              raise SystemExit(f'Final video pixel format invalid: {st.get("pix_fmt")}')
+          if (st.get('width'),st.get('height'))!=(1080,1920): raise SystemExit('Final video dimensions invalid')
+          if st.get('sample_aspect_ratio')!='1:1': raise SystemExit('Final video SAR invalid')
+          if st.get('pix_fmt')!='yuv420p': raise SystemExit('Final video pixel format invalid')
           print('FINAL VIDEO / 1080x1920 / SAR 1:1 / yuv420p: PASS')
 
           intro=out/'video_scenes/000_intro.jpg'
@@ -203,19 +239,18 @@ jobs:
           manifest=json.loads((out/'sync_manifest.json').read_text(encoding='utf-8'))
           if len(manifest.get('segments',[]))!=14: raise SystemExit('Expected 14 sync segments')
           delta=abs(float(manifest.get('total_video_seconds',0))-float(manifest.get('total_audio_seconds',0)))
-          if delta>0.20:
-              raise SystemExit(f'Audio/video duration delta exceeds 0.20s: {delta:.3f}s')
+          if delta>0.20: raise SystemExit(f'Audio/video duration delta exceeds 0.20s: {delta:.3f}s')
 
           for p in out.rglob('*'):
               if p.is_file() and p.suffix.lower() in {'.md','.txt','.json'}:
                   t=p.read_text(encoding='utf-8',errors='ignore')
-                  if 'विस्तृत फलादेश आवाज़ में सुनें' in t or 'विस्तृत फलादेश आपकी आवाज़ में' in t:
-                      raise SystemExit(f'Forbidden legacy footer found in {p}')
+                  for token in ['विस्तृत फलादेश आवाज़ में सुनें','विस्तृत फलादेश आपकी आवाज़ में','...','…','□','�']:
+                      if token in t: raise SystemExit(f'Forbidden output text in {p}: {token}')
 
           print('14 SCENES / 1080x1920: PASS')
-          print('NO LEGACY FOOTER: PASS')
+          print('NO LEGACY/TRUNCATED COPY: PASS')
           print('AUDIO-LED SYNC: PASS')
-          print('V21.5 OUTPUT QA: PASS')
+          print('V22 OUTPUT QA: PASS')
           PY
 
       - name: Package production artifact
