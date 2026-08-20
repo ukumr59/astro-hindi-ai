@@ -31,6 +31,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Syntax smoke test
+        run: python -m py_compile video_engine/render_sync.py video_engine/premium_entry.py
+
       - name: Validate bundled devotional assets
         run: |
           python - <<'PY'
