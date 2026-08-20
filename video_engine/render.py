@@ -1,14 +1,13 @@
 """
-Daily Astro Hindi Video Renderer - V12
+Daily Astro Hindi Video Renderer - V14
 
 Purpose:
 - Keep the existing generated astrology narration/script.
-- Put a REAL deity photograph/illustration prominently into each Rashi scene.
+- Put premium bundled devotional deity artwork prominently into each Rashi scene.
 - Animate every Rashi scene with a slow cinematic zoom/pan and gentle motion.
 - Cross-fade between Rashi scenes.
 - Never use the old generic Om-only fallback as a deity image.
-- If Wikimedia cannot provide a deity image, stop with a clear error instead
-  of silently generating a fake deity card.
+- Use only bundled deity artwork; never fall back to fake geometric deity drawings.
 
 Run:
     python -m video_engine.render
@@ -16,16 +15,11 @@ Run:
 
 from pathlib import Path
 import asyncio
-import json
-import math
 import re
 import subprocess
 import textwrap
-import time
-import urllib.parse
-import urllib.request
 
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance, ImageOps
 import edge_tts
 import imageio_ffmpeg
 
@@ -37,6 +31,9 @@ import imageio_ffmpeg
 OUTPUT = Path("output")
 SCENES = OUTPUT / "video_scenes"
 DEITIES = OUTPUT / "deity_images"
+ASSETS = Path("assets")
+DEITY_ASSETS = ASSETS / "deities"
+INTRO_ASSET = ASSETS / "intro_devotional.jpg"
 
 SCRIPT = OUTPUT / "daily_script.md"
 VOICE = OUTPUT / "daily_voice.mp3"
@@ -50,12 +47,7 @@ FPS = 30
 
 VOICE_NAME = "hi-IN-SwaraNeural"
 
-FONT_URL = (
-    "https://github.com/googlefonts/"
-    "noto-fonts/raw/main/hinted/ttf/"
-    "NotoSansDevanagari/NotoSansDevanagari-Regular.ttf"
-)
-FONT_PATH = OUTPUT / "NotoSansDevanagari-Regular.ttf"
+FONT_PATH = ASSETS / "NotoSansDevanagari-Regular.ttf"
 
 UA = (
     "Mozilla/5.0 (X11; Linux x86_64) "
@@ -109,28 +101,12 @@ def run(cmd, timeout=900):
     return result.stdout
 
 
-def request_bytes(url, timeout=60):
-    request = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": UA,
-            "Accept": "*/*",
-        },
-    )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return response.read()
-
-
 def get_font(size):
-    OUTPUT.mkdir(parents=True, exist_ok=True)
-
     if not FONT_PATH.exists():
-        FONT_PATH.write_bytes(request_bytes(FONT_URL))
-
-    return ImageFont.truetype(
-        str(FONT_PATH),
-        size,
-    )
+        raise RuntimeError(
+            f"Missing bundled Unicode font: {FONT_PATH}"
+        )
+    return ImageFont.truetype(str(FONT_PATH), size)
 
 
 def wrap_text(text, width=30):
@@ -248,620 +224,12 @@ def fallback_section(script, key):
 
 
 # ============================================================
-# WIKIMEDIA COMMONS IMAGE RESOLUTION
+# DEVOTIONAL ARTWORK
 # ============================================================
+# All deity artwork is bundled locally under assets/deities.
+# No remote deity-image service is contacted by the renderer.
 
-def commons_search(search_text):
-    """
-    Search Wikimedia Commons at runtime and return an actual image URL.
-    This avoids hard-coded thumbnail URLs that can return HTTP 403.
-    """
 
-    params = {
-        "action": "query",
-        "generator": "search",
-        "gsrsearch": search_text,
-        "gsrnamespace": "6",
-        "gsrlimit": "10",
-        "prop": "imageinfo",
-        "iiprop": "url|mime",
-        "iiurlwidth": "1400",
-        "format": "json",
-        "formatversion": "2",
-    }
-
-    url = (
-        "https://commons.wikimedia.org/w/api.php?"
-        + urllib.parse.urlencode(params)
-    )
-
-    data = request_bytes(url)
-    payload = json.loads(data.decode("utf-8"))
-
-    pages = payload.get("query", {}).get("pages", [])
-
-    candidates = []
-
-    for page in pages:
-        info = page.get("imageinfo") or []
-        if not info:
-            continue
-
-        item = info[0]
-        image_url = item.get("thumburl") or item.get("url")
-        mime = item.get("mime", "")
-
-        if not image_url:
-            continue
-
-        if not mime.startswith("image/"):
-            continue
-
-        candidates.append(
-            {
-                "title": page.get("title", ""),
-                "url": image_url,
-                "pageid": page.get("pageid", ""),
-            }
-        )
-
-    if not candidates:
-        return None
-
-    # Prefer filenames that look like actual devotional artwork.
-    preferred = [
-        item for item in candidates
-        if any(
-            word in item["title"].lower()
-            for word in (
-                "temple",
-                "idol",
-                "murti",
-                "god",
-                "goddess",
-                "deity",
-                "statue",
-                "painting",
-            )
-        )
-    ]
-
-    return (preferred or candidates)[0]
-
-
-
-def _draw_centered(draw, text, font, y, fill):
-    box = draw.textbbox((0, 0), text, font=font)
-    x = (1000 - (box[2] - box[0])) / 2
-    draw.text((x, y), text, font=font, fill=fill)
-
-
-def _halo(draw, cx, cy, radius):
-    for r in range(radius, 40, -12):
-        alpha = int(18 + 90 * (radius - r) / max(1, radius - 40))
-        fill = (255, 205, 60, alpha)
-        draw.ellipse(
-            (cx-r, cy-r, cx+r, cy+r),
-            outline=fill,
-            width=8,
-        )
-
-
-def _deity_canvas():
-    return Image.new("RGBA", (1000, 1000), (8, 3, 28, 255))
-
-
-def _save_deity(img, path):
-    # Add a soft vignette so the deity remains visually dominant
-    # after the scene is animated.
-    vignette = Image.new("L", (1000, 1000), 0)
-    vd = ImageDraw.Draw(vignette)
-    vd.ellipse((60, 40, 940, 960), fill=235)
-    vignette = vignette.filter(ImageFilter.GaussianBlur(55))
-
-    dark = Image.new("RGBA", (1000, 1000), (0, 0, 0, 0))
-    dark.putalpha(Image.eval(vignette, lambda p: 235 - p))
-    img = Image.alpha_composite(img, dark)
-
-    img.convert("RGB").save(path, "JPEG", quality=96)
-
-
-def _make_hanuman(path):
-    img = _deity_canvas()
-    d = ImageDraw.Draw(img)
-    gold = (255, 213, 75, 255)
-    red = (178, 35, 35, 255)
-    skin = (155, 82, 48, 255)
-    dark = (45, 18, 18, 255)
-    white = (255, 245, 220, 255)
-
-    _halo(d, 500, 390, 350)
-
-    # Crown
-    d.polygon([(410,245),(445,115),(500,205),(555,115),(590,245)], fill=gold)
-    d.ellipse((420,210,580,300), fill=gold, outline=white, width=4)
-
-    # Ears / head / face
-    d.ellipse((350,280,650,570), fill=skin, outline=gold, width=7)
-    d.ellipse((300,330,390,460), fill=skin, outline=gold, width=6)
-    d.ellipse((610,330,700,460), fill=skin, outline=gold, width=6)
-    d.ellipse((415,365,450,405), fill=dark)
-    d.ellipse((550,365,585,405), fill=dark)
-    d.polygon([(475,425),(525,425),(500,475)], fill=(105,45,30,255))
-    d.arc((430,445,570,525), 10, 170, fill=white, width=8)
-
-    # Tilak
-    d.line((500,310,500,385), fill=white, width=9)
-
-    # Body
-    d.ellipse((310,520,690,880), fill=red, outline=gold, width=7)
-    d.ellipse((225,555,385,700), fill=skin, outline=gold, width=6)
-    d.ellipse((615,555,775,700), fill=skin, outline=gold, width=6)
-
-    # Mace
-    d.line((770,350,790,820), fill=gold, width=28)
-    d.ellipse((700,250,875,430), fill=gold, outline=white, width=7)
-
-    # Tail
-    d.arc((150,640,420,930), 260, 70, fill=skin, width=24)
-
-    _draw_centered(d, "हनुमान जी", get_font(62), 900, gold)
-    _save_deity(img, path)
-
-
-def _make_ganesha(path):
-    img = _deity_canvas()
-    d = ImageDraw.Draw(img)
-    gold = (255, 211, 72, 255)
-    skin = (218, 142, 105, 255)
-    red = (180, 42, 45, 255)
-    dark = (48, 18, 25, 255)
-    white = (255, 245, 220, 255)
-
-    _halo(d, 500, 390, 350)
-
-    # Crown
-    d.polygon([(385,255),(430,105),(500,200),(570,105),(615,255)], fill=gold)
-    d.ellipse((390,225,610,310), fill=gold, outline=white, width=4)
-
-    # Elephant head and ears
-    d.ellipse((335,270,665,610), fill=skin, outline=gold, width=7)
-    d.ellipse((215,320,395,555), fill=skin, outline=gold, width=6)
-    d.ellipse((605,320,785,555), fill=skin, outline=gold, width=6)
-
-    d.ellipse((405,385,445,425), fill=dark)
-    d.ellipse((555,385,595,425), fill=dark)
-
-    # Trunk
-    d.rounded_rectangle((460,430,540,690), radius=35, fill=skin, outline=gold, width=5)
-    d.arc((475,575,590,720), 90, 270, fill=skin, width=38)
-
-    # Body and four arms
-    d.ellipse((330,585,670,900), fill=red, outline=gold, width=7)
-    for x1, y1, x2, y2 in [
-        (350,620,220,520),(650,620,780,520),
-        (360,720,230,820),(640,720,770,820)
-    ]:
-        d.line((x1,y1,x2,y2), fill=skin, width=38)
-
-    # Modak
-    d.ellipse((735,800,815,875), fill=gold)
-    _draw_centered(d, "श्री गणेश जी", get_font(58), 900, gold)
-    _save_deity(img, path)
-
-
-def _make_shiva(path):
-    img = _deity_canvas()
-    d = ImageDraw.Draw(img)
-    gold = (255, 211, 72, 255)
-    skin = (168, 190, 205, 255)
-    blue = (55, 115, 175, 255)
-    dark = (25, 30, 45, 255)
-    white = (245, 250, 255, 255)
-
-    _halo(d, 500, 400, 350)
-
-    # Hair / top knot
-    d.ellipse((350,180,650,580), fill=skin, outline=gold, width=7)
-    d.polygon([(360,250),(420,100),(500,205),(580,100),(640,250)], fill=dark)
-    d.arc((350,90,650,390), 180, 360, fill=gold, width=16)
-
-    # Third eye
-    d.ellipse((485,310,515,360), fill=blue)
-    d.ellipse((420,385,465,425), fill=dark)
-    d.ellipse((535,385,580,425), fill=dark)
-    d.arc((435,420,565,520), 10, 170, fill=white, width=8)
-
-    # Blue throat
-    d.ellipse((420,465,580,650), fill=blue, outline=gold, width=6)
-
-    # Body
-    d.ellipse((320,570,680,900), fill=white, outline=gold, width=7)
-
-    # Trident
-    d.line((760,200,760,850), fill=gold, width=18)
-    d.line((760,210,690,320), fill=gold, width=14)
-    d.line((760,210,830,320), fill=gold, width=14)
-    d.line((760,210,760,330), fill=gold, width=14)
-
-    # Crescent
-    d.arc((400,155,600,335), 205, 335, fill=white, width=14)
-
-    _draw_centered(d, "भगवान शिव", get_font(62), 900, gold)
-    _save_deity(img, path)
-
-
-def _make_lakshmi(path):
-    img = _deity_canvas()
-    d = ImageDraw.Draw(img)
-    gold = (255, 215, 75, 255)
-    skin = (235, 172, 145, 255)
-    pink = (215, 70, 120, 255)
-    red = (175, 45, 60, 255)
-    white = (255, 245, 225, 255)
-
-    _halo(d, 500, 380, 350)
-
-    # Lotus seat
-    for cx, cy, rx, ry in [
-        (390,760,120,80),(455,730,110,85),(545,730,110,85),(610,760,120,80)
-    ]:
-        d.ellipse((cx-rx,cy-ry,cx+rx,cy+ry), fill=pink, outline=gold, width=4)
-
-    # Body / sari
-    d.polygon([(380,430),(620,430),(720,870),(280,870)], fill=red, outline=gold)
-    d.ellipse((400,235,600,470), fill=skin, outline=gold, width=7)
-
-    # Crown
-    d.polygon([(405,260),(450,115),(500,205),(550,115),(595,260)], fill=gold)
-    d.ellipse((410,225,590,290), fill=gold)
-
-    # Face
-    d.ellipse((430,325,462,360), fill=(45,25,30,255))
-    d.ellipse((538,325,570,360), fill=(45,25,30,255))
-    d.arc((445,350,555,420), 5, 175, fill=white, width=7)
-
-    # Four arms
-    for x1,y1,x2,y2 in [(420,490,245,370),(580,490,755,370),(400,590,220,670),(600,590,780,670)]:
-        d.line((x1,y1,x2,y2), fill=skin, width=34)
-
-    # Lotus in hands
-    for cx,cy in [(235,350),(765,350),(210,660),(790,660)]:
-        d.ellipse((cx-35,cy-55,cx+35,cy+55), fill=pink, outline=gold, width=3)
-
-    _draw_centered(d, "महालक्ष्मी जी", get_font(58), 900, gold)
-    _save_deity(img, path)
-
-
-def _make_vishnu(path):
-    img = _deity_canvas()
-    d = ImageDraw.Draw(img)
-    gold = (255, 213, 75, 255)
-    skin = (95,145,205,255)
-    yellow = (232,185,55,255)
-    dark = (30,40,70,255)
-    white = (245,250,255,255)
-
-    _halo(d, 500, 390, 350)
-
-    # Crown
-    d.polygon([(390,255),(430,100),(500,195),(570,100),(610,255)], fill=gold)
-    d.ellipse((395,225,605,300), fill=gold, outline=white, width=4)
-
-    # Face and body
-    d.ellipse((365,270,635,560), fill=skin, outline=gold, width=7)
-    d.ellipse((425,365,465,405), fill=dark)
-    d.ellipse((535,365,575,405), fill=dark)
-    d.arc((430,420,570,510), 5, 175, fill=white, width=8)
-    d.ellipse((330,520,670,900), fill=yellow, outline=gold, width=7)
-
-    # Four arms
-    arms = [(360,570,190,350),(640,570,810,350),(360,690,180,810),(640,690,820,810)]
-    for x1,y1,x2,y2 in arms:
-        d.line((x1,y1,x2,y2), fill=skin, width=34)
-
-    # Conch, chakra, mace, lotus
-    d.ellipse((145,315,240,410), fill=white, outline=gold, width=5)
-    d.ellipse((770,315,865,410), fill=gold, outline=white, width=5)
-    d.line((815,355,815,430), fill=gold, width=10)
-    d.ellipse((130,775,235,880), outline=gold, width=14)
-    d.line((182,785,182,870), fill=gold, width=8)
-    d.line((182,830,225,810), fill=gold, width=8)
-
-    _draw_centered(d, "भगवान विष्णु", get_font(58), 900, gold)
-    _save_deity(img, path)
-
-
-
-def _make_surya(path):
-    img = _deity_canvas()
-    d = ImageDraw.Draw(img)
-    gold = (255, 205, 55, 255)
-    orange = (240, 110, 25, 255)
-    red = (170, 45, 25, 255)
-    skin = (205, 135, 85, 255)
-    white = (255, 248, 220, 255)
-
-    # Radiant solar halo.
-    _halo(d, 500, 390, 350)
-
-    # Sun rays.
-    for angle in range(0, 360, 20):
-        rad = math.radians(angle)
-        x1 = 500 + int(335 * math.cos(rad))
-        y1 = 390 + int(335 * math.sin(rad))
-        x2 = 500 + int(455 * math.cos(rad))
-        y2 = 390 + int(455 * math.sin(rad))
-        d.line((x1, y1, x2, y2), fill=gold, width=18)
-
-    # Crown.
-    d.polygon(
-        [(390,255),(430,105),(500,195),(570,105),(610,255)],
-        fill=gold,
-        outline=white,
-    )
-    d.ellipse(
-        (395,225,605,295),
-        fill=orange,
-        outline=white,
-        width=4,
-    )
-
-    # Face.
-    d.ellipse(
-        (350,275,650,570),
-        fill=skin,
-        outline=gold,
-        width=7,
-    )
-    d.ellipse((420,365,460,405), fill=red)
-    d.ellipse((540,365,580,405), fill=red)
-    d.arc((430,420,570,510), 5, 175, fill=white, width=8)
-
-    # Golden robes / torso.
-    d.ellipse(
-        (320,515,680,910),
-        fill=orange,
-        outline=gold,
-        width=8,
-    )
-
-    # Two raised arms.
-    d.line((390,590,190,370), fill=skin, width=34)
-    d.line((610,590,810,370), fill=skin, width=34)
-
-    # Solar discs in hands.
-    d.ellipse((135,315,245,425), fill=gold, outline=white, width=6)
-    d.ellipse((755,315,865,425), fill=gold, outline=white, width=6)
-
-    # Central sun emblem.
-    d.ellipse(
-        (430,610,570,750),
-        fill=gold,
-        outline=white,
-        width=5,
-    )
-    for angle in range(0, 360, 45):
-        rad = math.radians(angle)
-        x1 = 500 + int(78 * math.cos(rad))
-        y1 = 680 + int(78 * math.sin(rad))
-        x2 = 500 + int(120 * math.cos(rad))
-        y2 = 680 + int(120 * math.sin(rad))
-        d.line((x1,y1,x2,y2), fill=gold, width=7)
-
-    _draw_centered(d, "सूर्य देव", get_font(62), 900, gold)
-    _save_deity(img, path)
-
-
-def _make_shani(path):
-    img = _deity_canvas()
-    d = ImageDraw.Draw(img)
-    gold = (255, 210, 65, 255)
-    skin = (80,75,95,255)
-    blue = (35,55,110,255)
-    dark = (10,10,25,255)
-    white = (230,235,255,255)
-
-    _halo(d, 500, 390, 350)
-
-    # Dark halo ring
-    d.ellipse((190,80,810,700), outline=blue, width=18)
-
-    # Crown
-    d.polygon([(390,260),(440,105),(500,195),(560,105),(610,260)], fill=gold)
-    d.ellipse((395,225,605,295), fill=gold, outline=white, width=4)
-
-    # Face/body
-    d.ellipse((350,275,650,570), fill=skin, outline=gold, width=7)
-    d.ellipse((420,365,460,405), fill=white)
-    d.ellipse((540,365,580,405), fill=white)
-    d.ellipse((435,380,450,395), fill=dark)
-    d.ellipse((550,380,565,395), fill=dark)
-    d.ellipse((330,520,670,900), fill=blue, outline=gold, width=7)
-
-    # Staff
-    d.line((760,230,760,850), fill=gold, width=18)
-    d.ellipse((710,160,810,260), fill=gold, outline=white, width=5)
-
-    # Saturn ring
-    d.ellipse((170,500,830,700), outline=gold, width=10)
-
-    _draw_centered(d, "शनि देव", get_font(62), 900, gold)
-    _save_deity(img, path)
-
-
-# ============================================================
-# REAL DEITY ARTWORK SOURCES
-# ============================================================
-
-# IMPORTANT:
-# Do NOT use the old LACMA image URLs here. Those endpoints returned 404s.
-# We use The Metropolitan Museum of Art Open Access API for six deities.
-# ALL deity artwork is sourced from The Metropolitan Museum of Art Open Access API.
-# This deliberately avoids PICRYL/Wikimedia page scraping and eliminates the
-# 403/429 failures seen in GitHub Actions. The selected Shani record is the
-# Met's public-domain iconographic drawing of Saturn/Shanaishchara.
-
-MET_API = "https://collectionapi.metmuseum.org/public/collection/v1/objects/{}"
-
-DEITY_SOURCES = {
-    "हनुमान जी": {
-        "met_id": 37960,
-        "title": "Hanuman Bearing the Mountaintop with Medicinal Herbs — The Metropolitan Museum of Art, 57.70.6",
-        "credit": "The Metropolitan Museum of Art Open Access — Public Domain",
-    },
-    "महालक्ष्मी जी": {
-        "met_id": 78264,
-        "title": "Lakshmi — The Metropolitan Museum of Art, 2013.10",
-        "credit": "The Metropolitan Museum of Art Open Access — Public Domain",
-    },
-    "श्री गणेश जी": {
-        "met_id": 37397,
-        "title": "Ganesha — The Metropolitan Museum of Art, 2015.500.4.12",
-        "credit": "The Metropolitan Museum of Art Open Access — Public Domain",
-    },
-    "भगवान शिव": {
-        "met_id": 39328,
-        "title": "Shiva as Lord of Dance (Nataraja) — The Metropolitan Museum of Art",
-        "credit": "The Metropolitan Museum of Art Open Access — Public Domain",
-    },
-    "सूर्य देव": {
-        "met_id": 39248,
-        "title": "Standing Surya — The Metropolitan Museum of Art, 2000.284.1",
-        "credit": "The Metropolitan Museum of Art Open Access — Public Domain",
-    },
-    "भगवान विष्णु": {
-        "met_id": 39326,
-        "title": "Standing Vishnu — The Metropolitan Museum of Art, 62.265",
-        "credit": "The Metropolitan Museum of Art Open Access — Public Domain",
-    },
-    "शनि देव": {
-        "met_id": 45617,
-        "title": "Iconographic Drawing of Saturn (Doyō / Shanaishchara) — The Metropolitan Museum of Art, 1975.268.15",
-        "credit": "The Metropolitan Museum of Art Open Access — Public Domain",
-    },
-}
-
-
-def met_object_image(met_id):
-    """Resolve a stable public-domain image through The Met Open Access API."""
-    api_url = MET_API.format(met_id)
-    raw = request_bytes(api_url, timeout=60)
-    data = json.loads(raw.decode("utf-8"))
-
-    if not data.get("isPublicDomain"):
-        raise RuntimeError(f"Met object {met_id} is not marked public domain.")
-
-    image_url = data.get("primaryImage") or data.get("primaryImageSmall")
-    if not image_url:
-        raise RuntimeError(f"Met object {met_id} has no downloadable primary image.")
-
-    return image_url
-
-
-
-def download_deity(item_index, deity, query):
-    destination = DEITIES / f"deity_{item_index:02d}.jpg"
-    source = DEITY_SOURCES.get(deity)
-
-    if source is None:
-        raise RuntimeError(f"No real deity artwork source exists for {deity}.")
-
-    # Resolve the actual image URL once. This avoids hard-coded museum image
-    # paths that can become stale while keeping the source authoritative.
-    if "met_id" in source:
-        image_url = met_object_image(source["met_id"])
-    else:
-        raise RuntimeError(f"Unsupported deity artwork source for {deity}.")
-
-    print(f"Downloading real deity artwork: {deity}")
-    print(f"Artwork source: {image_url}")
-
-    last_error = None
-    if not destination.exists() or destination.stat().st_size < 10000:
-        for attempt, wait_seconds in enumerate((0, 5, 15), start=1):
-            if wait_seconds:
-                time.sleep(wait_seconds)
-            try:
-                data = request_bytes(image_url, timeout=90)
-                if not data or len(data) < 10000:
-                    raise RuntimeError("Downloaded response is too small to be an image.")
-                destination.write_bytes(data)
-                break
-            except Exception as exc:
-                last_error = exc
-                print(f"Deity download attempt {attempt} failed for {deity}: {exc}")
-        else:
-            raise RuntimeError(
-                f"Could not download the real deity image for {deity}. Last error: {last_error}"
-            )
-
-    try:
-        with Image.open(destination) as raw:
-            raw = raw.convert("RGB")
-            if raw.width < 300 or raw.height < 300:
-                raise RuntimeError(f"Deity image is too small: {raw.size}")
-            # HD QUALITY GATE:
-            # Keep the original high-resolution artwork whenever possible.
-            # If a source is smaller than the HD target, upscale it once so
-            # the final 1080x1920 render never uses a tiny source image.
-            min_long_edge = 2160
-            long_edge = max(raw.width, raw.height)
-            if long_edge < min_long_edge:
-                scale = min_long_edge / long_edge
-                new_size = (
-                    max(1, int(round(raw.width * scale))),
-                    max(1, int(round(raw.height * scale))),
-                )
-                raw = raw.resize(new_size, Image.Resampling.LANCZOS)
-
-            # Do not downsample HD source artwork.
-            raw.save(destination, "JPEG", quality=97, subsampling=0)
-    except Exception as exc:
-        raise RuntimeError(
-            f"Downloaded deity artwork for {deity} is not a valid image: {exc}"
-        )
-
-    return destination, source["title"], image_url, source["credit"]
-
-
-def prepare_deities():
-    DEITIES.mkdir(parents=True, exist_ok=True)
-
-    credits = [
-        "REAL DEITY ARTWORK CREDITS",
-        "===========================",
-        "",
-        "All seven deity visuals are rendered in HD quality for the 1080x1920 video. Source artwork is preserved at native resolution when possible and upscaled only when necessary; no generated geometric/cartoon deity drawings are used.",
-        "",
-    ]
-
-    resolved = {}
-    unique = {}
-
-    for _, _, deity, query in RASHIS:
-        unique[deity] = query
-
-    for number, (deity, query) in enumerate(unique.items(), start=1):
-        path, title, source_url, credit = download_deity(number, deity, query)
-        resolved[deity] = path
-        with Image.open(path) as verified:
-            width, height = verified.size
-        credits.extend([
-            deity,
-            title,
-            credit,
-            source_url,
-            f"Rendered artwork resolution: {width}x{height}",
-            ""]
-        )
-
-    CREDITS.write_text("\n".join(credits), encoding="utf-8")
-    return resolved
-
-
-# ============================================================
-# STATIC SCENE CREATION
 # ============================================================
 
 def crop_cover(img, width, height):
@@ -902,116 +270,107 @@ def create_scene(
     content,
 ):
     """
-    Produces a high-resolution vertical poster that ffmpeg later animates.
-
-    Deity image is deliberately large:
-    approximately 900 x 900 inside the 1080 x 1920 canvas.
+    Rich devotional Rashi scene:
+    - large deity artwork
+    - temple-like golden frame
+    - divine glow / halo
+    - zodiac/rashi header
+    - no deity name below the photograph
+    - readable astrology content
     """
-
     output = SCENES / f"{index:03d}_{key}.jpg"
 
-    deity_img = Image.open(
-        deity_image
-    ).convert("RGB")
+    deity_img = Image.open(deity_image).convert("RGB")
 
-    # Full-canvas blurred devotional background.
-    bg = crop_cover(
-        deity_img,
-        WIDTH,
-        HEIGHT,
-    )
-    bg = bg.filter(
-        ImageFilter.GaussianBlur(30)
-    )
+    # Rich blurred deity background.
+    bg = crop_cover(deity_img, WIDTH, HEIGHT)
+    bg = bg.filter(ImageFilter.GaussianBlur(34))
+    bg = ImageEnhance.Brightness(bg).enhance(0.42)
+    bg = ImageEnhance.Contrast(bg).enhance(1.08)
 
-    canvas = Image.new(
-        "RGBA",
-        (WIDTH, HEIGHT),
-        (0, 0, 0, 0),
-    )
+    canvas = Image.new("RGBA", (WIDTH, HEIGHT), (20, 5, 30, 255))
+    canvas.paste(bg, (0, 0))
 
-    canvas.paste(
-        bg,
-        (0, 0),
-    )
-
-    overlay = Image.new(
-        "RGBA",
-        (WIDTH, HEIGHT),
-        (8, 4, 25, 170),
-    )
-
-    canvas = Image.alpha_composite(
-        canvas,
-        overlay,
-    )
+    # Warm devotional color veil.
+    veil = Image.new("RGBA", (WIDTH, HEIGHT), (20, 5, 30, 145))
+    canvas = Image.alpha_composite(canvas, veil)
 
     draw = ImageDraw.Draw(canvas)
 
-    title_font = get_font(72)
-    body_font = get_font(36)
-    footer_font = get_font(28)
+    title_font = get_font(70)
+    badge_font = get_font(34)
+    body_font = get_font(35)
+    footer_font = get_font(27)
+
+    gold = (255, 214, 74, 255)
+    light_gold = (255, 239, 164, 255)
+    white = (255, 252, 240, 255)
+    dark = (22, 7, 28, 238)
+
+    # Decorative top border.
+    draw.rectangle((0, 0, WIDTH, 12), fill=gold)
+    draw.rectangle((0, HEIGHT - 12, WIDTH, HEIGHT), fill=gold)
 
     # Header.
     draw.rounded_rectangle(
-        (28, 28, WIDTH - 28, 175),
+        (26, 28, WIDTH - 26, 178),
         radius=34,
-        fill=(3, 2, 18, 230),
-        outline=(255, 210, 65, 235),
-        width=4,
-    )
-
-    title = f"॥ {label} ॥"
-
-    box = draw.textbbox(
-        (0, 0),
-        title,
-        font=title_font,
-    )
-
-    draw.text(
-        (
-            (WIDTH - (box[2] - box[0])) / 2,
-            60,
-        ),
-        title,
-        font=title_font,
-        fill=(255, 220, 80),
-    )
-
-    # Main deity frame.
-    panel = (
-        35,
-        220,
-        WIDTH - 35,
-        1110,
-    )
-
-    draw.rounded_rectangle(
-        panel,
-        radius=42,
-        fill=(2, 1, 15, 230),
-        outline=(255, 215, 75, 240),
+        fill=dark,
+        outline=gold,
         width=5,
     )
 
-    hero_w = 900
-    hero_h = 790
+    title = f"॥ {label} ॥"
+    box = draw.textbbox((0, 0), title, font=title_font)
+    draw.text(
+        ((WIDTH - (box[2] - box[0])) / 2, 52),
+        title,
+        font=title_font,
+        fill=light_gold,
+    )
 
-    # Fit the complete deity artwork inside the hero area so the figure
-    # is not cropped at the head, hands, mount, halo, or feet.
+    # Small devotional badge ABOVE the artwork.
+    badge = f"आराध्य देव : {deity}"
+    box = draw.textbbox((0, 0), badge, font=badge_font)
+    bx = (WIDTH - (box[2] - box[0])) / 2
+    draw.rounded_rectangle(
+        (bx - 28, 130, bx + (box[2] - box[0]) + 28, 178),
+        radius=22,
+        fill=(120, 48, 8, 230),
+        outline=gold,
+        width=2,
+    )
+    draw.text((bx, 136), badge, font=badge_font, fill=white)
+
+    # Main hero frame.
+    panel = (30, 215, WIDTH - 30, 1120)
+    draw.rounded_rectangle(
+        panel,
+        radius=44,
+        fill=(5, 2, 16, 225),
+        outline=gold,
+        width=6,
+    )
+
+    # Inner glow rings.
+    for inset, alpha in ((18, 150), (34, 95)):
+        draw.rounded_rectangle(
+            (
+                panel[0] + inset,
+                panel[1] + inset,
+                panel[2] - inset,
+                panel[3] - inset,
+            ),
+            radius=36,
+            outline=(255, 224, 120, alpha),
+            width=3,
+        )
+
+    hero_w, hero_h = 900, 820
     hero = deity_img.copy()
-    hero.thumbnail(
-        (hero_w, hero_h),
-        Image.Resampling.LANCZOS,
-    )
+    hero.thumbnail((hero_w, hero_h), Image.Resampling.LANCZOS)
 
-    hero_canvas = Image.new(
-        "RGB",
-        (hero_w, hero_h),
-        (10, 7, 28),
-    )
-
+    hero_canvas = Image.new("RGB", (hero_w, hero_h), (10, 5, 22))
     hx = (hero_w - hero.width) // 2
     hy = (hero_h - hero.height) // 2
     hero_canvas.paste(hero, (hx, hy))
@@ -1019,216 +378,254 @@ def create_scene(
     x = (WIDTH - hero_w) // 2
     y = 250
 
-    mask = Image.new(
-        "L",
-        (hero_w, hero_h),
-        0,
-    )
-
-    mask_draw = ImageDraw.Draw(mask)
-    mask_draw.rounded_rectangle(
-        (0, 0, hero_w, hero_h),
-        radius=36,
-        fill=255,
-    )
-
-    canvas.paste(
-        hero_canvas,
-        (x, y),
-        mask,
-    )
+    mask = Image.new("L", (hero_w, hero_h), 0)
+    md = ImageDraw.Draw(mask)
+    md.rounded_rectangle((0, 0, hero_w, hero_h), radius=34, fill=255)
+    canvas.paste(hero_canvas, (x, y), mask)
 
     draw.rounded_rectangle(
-        (
-            x,
-            y,
-            x + hero_w,
-            y + hero_h,
-        ),
-        radius=36,
-        outline=(255, 225, 130, 245),
+        (x, y, x + hero_w, y + hero_h),
+        radius=34,
+        outline=light_gold,
         width=5,
     )
 
-    # No deity name is printed below the artwork.
-    # The Rashi header above the image is the only title in the devotional panel.
+    # Divinity separator — deliberately above the text, not under the deity.
+    sep_y = 1085
+    draw.line((130, sep_y, WIDTH - 130, sep_y), fill=gold, width=3)
+    om_font = get_font(50)
+    om = "ॐ"
+    ob = draw.textbbox((0, 0), om, font=om_font)
+    draw.text(((WIDTH - (ob[2]-ob[0]))/2, sep_y-32), om, font=om_font, fill=gold)
 
-    # Astrology panel.
-    text_panel = (
-        42,
-        1145,
-        WIDTH - 42,
-        1695,
-    )
-
+    # Astrology text panel.
+    text_panel = (42, 1150, WIDTH - 42, 1695)
     draw.rounded_rectangle(
         text_panel,
-        radius=30,
-        fill=(3, 2, 17, 238),
-        outline=(180, 165, 205, 135),
-        width=2,
+        radius=32,
+        fill=(5, 2, 17, 242),
+        outline=(255, 214, 100, 165),
+        width=3,
     )
 
-    lines = wrap_text(
-        content,
-        width=31,
+    # Section heading.
+    section_heading = "आज के ग्रह गोचर के संकेत"
+    hb = draw.textbbox((0, 0), section_heading, font=badge_font)
+    draw.text(
+        ((WIDTH - (hb[2]-hb[0]))/2, 1175),
+        section_heading,
+        font=badge_font,
+        fill=light_gold,
     )
 
-    y_text = 1190
+    lines = wrap_text(content, width=31)
+    y_text = 1238
 
-    for line in lines[:10]:
+    for line in lines[:8]:
         draw.text(
             (72, y_text),
             line,
             font=body_font,
-            fill=(255, 255, 255),
+            fill=white,
         )
-        y_text += 50
-
+        y_text += 54
         if y_text > 1640:
             break
 
-    footer = (
-        "वैदिक गोचर • निरयन • लाहिरी • "
-        "सामान्य ज्योतिषीय संकेत"
-    )
-
-    box = draw.textbbox(
-        (0, 0),
-        footer,
-        font=footer_font,
-    )
-
+    footer = "॥ श्रद्धा | विश्वास | सकारात्मक ऊर्जा | वैदिक ज्योतिष ॥"
+    fb = draw.textbbox((0, 0), footer, font=footer_font)
     draw.text(
-        (
-            (WIDTH - (box[2] - box[0])) / 2,
-            1790,
-        ),
+        ((WIDTH - (fb[2]-fb[0]))/2, 1768),
         footer,
         font=footer_font,
-        fill=(230, 225, 240),
+        fill=light_gold,
     )
 
-    canvas.convert("RGB").save(
-        output,
-        "JPEG",
-        quality=95,
-    )
-
+    canvas.convert("RGB").save(output, "JPEG", quality=96, subsampling=0)
     return output
 
-
-def create_intro():
+def create_intro(script_text):
+    """
+    High-impact 7-second devotional opening.
+    Uses the bundled cinematic temple artwork and adds a clean Hindi
+    title/date layer so the first seconds feel unmistakably religious.
+    """
     output = SCENES / "000_intro.jpg"
 
-    img = Image.new(
-        "RGB",
-        (WIDTH, HEIGHT),
-        (12, 6, 30),
+    # Keep the opening current for every automated daily run.
+    date_line = next(
+        (line.strip() for line in script_text.splitlines()
+         if line.strip().startswith("आज की तारीख है")),
+        "आज की तारीख",
+    )
+    transition_line = next(
+        (line.strip() for line in script_text.splitlines()
+         if line.strip().startswith("चंद्रमा ने")),
+        "आज का प्रमुख चंद्र गोचर",
     )
 
-    draw = ImageDraw.Draw(img)
+    if not INTRO_ASSET.exists():
+        raise RuntimeError(f"Missing opening artwork: {INTRO_ASSET}")
 
-    om_font = get_font(180)
-    title_font = get_font(78)
-    subtitle_font = get_font(48)
+    source = Image.open(INTRO_ASSET).convert("RGB")
+    top = crop_cover(source, WIDTH, 820)
 
-    for text, y, font, fill in [
-        ("ॐ", 300, om_font, (255, 215, 70)),
-        ("दैनिक वैदिक ज्योतिष", 650, title_font, (255, 255, 255)),
-        ("आज का गोचर विश्लेषण", 800, subtitle_font, (255, 220, 120)),
-    ]:
-        box = draw.textbbox(
-            (0, 0),
-            text,
-            font=font,
-        )
-        draw.text(
-            (
-                (WIDTH - (box[2] - box[0])) / 2,
-                y,
-            ),
-            text,
-            font=font,
-            fill=fill,
-        )
+    canvas = Image.new("RGB", (WIDTH, HEIGHT), (15, 4, 24))
+    canvas.paste(top, (0, 0))
 
-    img.save(
-        output,
-        "JPEG",
-        quality=95,
+    # Rich lower temple floor / glow built from the same artwork.
+    lower = crop_cover(source, WIDTH, HEIGHT - 820)
+    lower = ImageEnhance.Brightness(lower).enhance(0.58)
+    lower = lower.filter(ImageFilter.GaussianBlur(2))
+    canvas.paste(lower, (0, 820))
+
+    overlay = Image.new("RGBA", (WIDTH, HEIGHT), (12, 2, 24, 65))
+    canvas = Image.alpha_composite(canvas.convert("RGBA"), overlay)
+    draw = ImageDraw.Draw(canvas)
+
+    gold = (255, 215, 80, 255)
+    cream = (255, 246, 218, 255)
+    deep = (50, 8, 24, 225)
+
+    # Animated-looking framing elements baked into the still.
+    draw.rectangle((0, 0, WIDTH, 10), fill=gold)
+    draw.rectangle((0, HEIGHT - 10, WIDTH, HEIGHT), fill=gold)
+
+    # Date / transition highlight.
+    date = date_line
+    df = get_font(42)
+    db = draw.textbbox((0, 0), date, font=df)
+    draw.rounded_rectangle(
+        (55, 870, WIDTH - 55, 950),
+        radius=28,
+        fill=deep,
+        outline=gold,
+        width=3,
+    )
+    draw.text(
+        ((WIDTH-(db[2]-db[0]))/2, 888),
+        date,
+        font=df,
+        fill=cream,
     )
 
+    # Strong devotional hook.
+    hook = "ॐ  |  आस्था  |  ज्योतिष  |  शुभ ऊर्जा  |  ॐ"
+    hf = get_font(50)
+    hb = draw.textbbox((0, 0), hook, font=hf)
+    draw.text(
+        ((WIDTH-(hb[2]-hb[0]))/2, 1010),
+        hook,
+        font=hf,
+        fill=gold,
+    )
+
+    # Current transition from the supplied script.
+    trans = "आज का प्रमुख गोचर : " + transition_line.replace("चंद्रमा ने ", "चंद्रमा : ")
+    tf = get_font(32)
+    tb = draw.textbbox((0, 0), trans, font=tf)
+    draw.rounded_rectangle(
+        (50, 1100, WIDTH - 50, 1190),
+        radius=28,
+        fill=(15, 3, 25, 225),
+        outline=(255, 205, 70, 210),
+        width=3,
+    )
+    draw.text(
+        ((WIDTH-(tb[2]-tb[0]))/2, 1122),
+        trans,
+        font=tf,
+        fill=cream,
+    )
+
+    # Bottom devotional promise.
+    promise = "बारहों राशियों के लिए आज के ग्रह संकेत"
+    pf = get_font(48)
+    pb = draw.textbbox((0, 0), promise, font=pf)
+    draw.text(
+        ((WIDTH-(pb[2]-pb[0]))/2, 1280),
+        promise,
+        font=pf,
+        fill=cream,
+    )
+
+    sub = "धैर्य  |  कर्म  |  विश्वास  |  सकारात्मक सोच"
+    sf = get_font(36)
+    sb = draw.textbbox((0, 0), sub, font=sf)
+    draw.text(
+        ((WIDTH-(sb[2]-sb[0]))/2, 1360),
+        sub,
+        font=sf,
+        fill=gold,
+    )
+
+    canvas.convert("RGB").save(output, "JPEG", quality=96, subsampling=0)
     return output
 
 
 def create_outro():
     output = SCENES / "999_outro.jpg"
 
-    img = Image.new(
-        "RGB",
-        (WIDTH, HEIGHT),
-        (12, 6, 30),
-    )
-
+    img = Image.new("RGB", (WIDTH, HEIGHT), (14, 4, 25))
     draw = ImageDraw.Draw(img)
 
-    title_font = get_font(78)
+    gold = (255, 215, 75)
+    cream = (255, 246, 220)
+
+    # Temple-like background using a soft radial glow.
+    for r in range(900, 80, -20):
+        alpha = max(0, int(90 * (1 - r / 900)))
+        draw.ellipse(
+            (
+                WIDTH//2-r,
+                650-r,
+                WIDTH//2+r,
+                650+r,
+            ),
+            fill=(40 + alpha//4, 8 + alpha//12, 35, 255),
+        )
+
+    title_font = get_font(82)
     body_font = get_font(48)
+    small_font = get_font(34)
 
-    title = "🙏 धन्यवाद 🙏"
-
-    box = draw.textbbox(
-        (0, 0),
-        title,
-        font=title_font,
-    )
-
+    title = "॥ शुभम भवतु ॥"
+    box = draw.textbbox((0, 0), title, font=title_font)
     draw.text(
-        (
-            (WIDTH - (box[2] - box[0])) / 2,
-            450,
-        ),
+        ((WIDTH-(box[2]-box[0]))/2, 430),
         title,
         font=title_font,
-        fill=(255, 215, 70),
+        fill=gold,
     )
 
     messages = [
-        "दैनिक वैदिक ज्योतिष अपडेट",
-        "वीडियो पसंद आए तो लाइक करें",
-        "चैनल को सब्सक्राइब करें",
+        "आपका दिन शुभ और मंगलमय हो",
+        "ईश्वर की कृपा और सकारात्मक ऊर्जा आपके साथ रहे",
+        "दैनिक वैदिक ज्योतिष • आस्था • विश्वास",
     ]
 
-    y = 700
-
+    y = 650
     for message in messages:
-        box = draw.textbbox(
-            (0, 0),
-            message,
-            font=body_font,
-        )
-
+        box = draw.textbbox((0, 0), message, font=body_font)
         draw.text(
-            (
-                (WIDTH - (box[2] - box[0])) / 2,
-                y,
-            ),
+            ((WIDTH-(box[2]-box[0]))/2, y),
             message,
             font=body_font,
-            fill=(255, 255, 255),
+            fill=cream,
         )
+        y += 125
 
-        y += 115
-
-    img.save(
-        output,
-        "JPEG",
-        quality=95,
+    footer = "ॐ • हर हर महादेव • जय श्री राम • राधे राधे • ॐ"
+    box = draw.textbbox((0, 0), footer, font=small_font)
+    draw.text(
+        ((WIDTH-(box[2]-box[0]))/2, 1180),
+        footer,
+        font=small_font,
+        fill=gold,
     )
 
+    img.save(output, "JPEG", quality=96, subsampling=0)
     return output
-
 
 # ============================================================
 # VOICE
@@ -1288,29 +685,14 @@ def make_animated_clip(
     index,
 ):
     """
-    Convert one static devotional/Rashi poster into an animated clip.
-
-    This implementation deliberately avoids FFmpeg expression functions
-    such as sin(), cos() and eq=brightness.  GitHub's FFmpeg build has been
-    rejecting those expressions in the filter graph.  The animation is
-    therefore produced using only zoompan's simple frame counter:
-
-      - continuous slow zoom from 1.00x to about 1.12x
-      - centered crop follows the zoom automatically
-
-    The scene-to-scene transition is handled separately by xfade.
+    Cinematic motion using FFmpeg zoompan only.
+    No sin/cos/eq expressions, avoiding the previous FFmpeg failures.
     """
-
     output = SCENES / f"clip_{index:02d}.mp4"
+    frames = max(1, int(round(duration * FPS)))
 
-    frames = max(
-        1,
-        int(round(duration * FPS)),
-    )
-
-    # Simple arithmetic only. No sin/cos/eq expressions.
-    # At the end of a typical ~50 s clip this reaches about 1.12x.
-    zoom_expr = "1+0.00008*on"
+    # Stronger visible motion than the previous barely noticeable zoom.
+    zoom_expr = "1+0.00014*on"
     x_expr = "(iw-iw/zoom)/2"
     y_expr = "(ih-ih/zoom)/2"
 
@@ -1328,35 +710,24 @@ def make_animated_clip(
         [
             ffmpeg,
             "-y",
-            "-loop",
-            "1",
-            "-i",
-            scene,
-            "-vf",
-            filtergraph,
-            "-frames:v",
-            str(frames),
+            "-loop", "1",
+            "-i", str(scene),
+            "-vf", filtergraph,
+            "-frames:v", str(frames),
             "-an",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-crf",
-            "24",
-            "-pix_fmt",
-            "yuv420p",
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-crf", "22",
+            "-pix_fmt", "yuv420p",
             str(output),
         ],
         timeout=900,
     )
 
     if not output.exists():
-        raise RuntimeError(
-            f"Animated clip was not created: {output}"
-        )
+        raise RuntimeError(f"Animated clip was not created: {output}")
 
     return output
-
 
 # ============================================================
 # CROSSFADE + AUDIO
@@ -1483,61 +854,94 @@ def build_video(
     ffmpeg,
     scene_paths,
     narration_seconds,
+    rashi_weights,
 ):
     """
-    14 scenes:
-      intro + 12 rashis + outro
-
-    Cross-fades are 0.8 sec.
-
-    The clip duration is calculated so the final cross-faded video
-    matches the narration length closely.
+    Intro is intentionally short and engaging (~7s).
+    Outro is short (~4s).
+    The twelve Rashi scenes receive the remaining duration according to
+    the relative amount of narration text, so the opening no longer consumes
+    ~50 seconds before the first Rashi appears.
     """
+    transition = 0.7
+    intro_duration = 7.0
+    outro_duration = 4.0
 
-    transition = 0.8
-    count = len(scene_paths)
+    if len(scene_paths) != 14:
+        raise RuntimeError(f"Expected 14 scenes, received {len(scene_paths)}.")
 
-    clip_duration = (
-        narration_seconds
-        + (count - 1) * transition
-    ) / count
+    usable = narration_seconds + transition * (len(scene_paths) - 1)
+    rashi_total = usable - intro_duration - outro_duration
 
-    print(
-        f"Scene count: {count}"
-    )
-    print(
-        f"Clip duration: {clip_duration:.3f}s"
-    )
-    print(
-        f"Transition: {transition:.3f}s"
-    )
+    if rashi_total <= 60:
+        raise RuntimeError("Narration is too short for the requested scene structure.")
+
+    total_weight = sum(rashi_weights) or 1.0
+    rashi_durations = [
+        rashi_total * (w / total_weight)
+        for w in rashi_weights
+    ]
+
+    durations = [intro_duration] + rashi_durations + [outro_duration]
+
+    print("Scene durations:")
+    for i, duration in enumerate(durations):
+        print(f"  scene {i:02d}: {duration:.2f}s")
 
     clips = []
-
-    for index, scene in enumerate(
-        scene_paths
-    ):
+    for index, (scene, duration) in enumerate(zip(scene_paths, durations)):
         clips.append(
             make_animated_clip(
                 ffmpeg,
                 scene,
-                clip_duration,
+                duration,
                 index,
             )
         )
 
-    silent = make_crossfade_video(
-        ffmpeg,
-        clips,
-        clip_duration,
-        transition,
+    # xfade with per-clip durations.
+    inputs = []
+    for clip in clips:
+        inputs.extend(["-i", str(clip)])
+
+    filter_parts = []
+    current = "[0:v]"
+    elapsed = durations[0]
+
+    for i in range(1, len(clips)):
+        offset = elapsed - transition
+        label = f"[xf{i}]"
+        filter_parts.append(
+            f"{current}[{i}:v]"
+            f"xfade=transition=fade:"
+            f"duration={transition}:"
+            f"offset={offset:.3f}"
+            f"{label}"
+        )
+        current = label
+        elapsed += durations[i] - transition
+
+    filtergraph = ";".join(filter_parts)
+    silent = SCENES / "video_no_audio.mp4"
+
+    run(
+        [
+            ffmpeg,
+            "-y",
+            *inputs,
+            "-filter_complex", filtergraph,
+            "-map", current,
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-crf", "22",
+            "-pix_fmt", "yuv420p",
+            "-an",
+            str(silent),
+        ],
+        timeout=1800,
     )
 
-    attach_audio(
-        ffmpeg,
-        silent,
-    )
-
+    attach_audio(ffmpeg, silent)
 
 # ============================================================
 # MAIN
@@ -1607,7 +1011,7 @@ def main():
     scenes = []
 
     scenes.append(
-        create_intro()
+        create_intro(script)
     )
 
     sections = extract_sections(
@@ -1646,6 +1050,14 @@ def main():
         create_outro()
     )
 
+    # Relative narration weights for the 12 Rashi scenes.
+    # This keeps the visual scene length aligned with the amount of
+    # spoken content without changing the generated astrology text.
+    rashi_weights = []
+    for key, *_ in RASHIS:
+        section = sections.get(key, fallback_section(script, key))
+        rashi_weights.append(max(1, len(section)))
+
     # --------------------------------------------------------
     # VIDEO
     # --------------------------------------------------------
@@ -1654,6 +1066,7 @@ def main():
         ffmpeg,
         scenes,
         narration_seconds,
+        rashi_weights,
     )
 
     print()
