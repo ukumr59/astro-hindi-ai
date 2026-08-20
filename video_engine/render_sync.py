@@ -1,50 +1,80 @@
 """Audio-led devotional renderer.
 
-TTS segment durations are the master visual timeline.
+The narration audio is the master timeline: every visual scene gets exactly
+one TTS segment's measured duration.  This module intentionally does not
+import video_engine.render so it cannot inherit stale/mismatched module state.
 """
 from pathlib import Path
 import asyncio
 import json
 import re
 import subprocess
+import textwrap
 
 import edge_tts
 import imageio_ffmpeg
-from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps, ImageFont
 
-from . import render as base
 
-OUT = base.OUTPUT
-SCENES = base.SCENES
-VOICE = base.VOICE
-VIDEO = base.VIDEO
+# ---------------------------------------------------------------------------
+# Independent renderer configuration
+# ---------------------------------------------------------------------------
+OUT = Path("output")
+SCENES = OUT / "video_scenes"
+VOICE = OUT / "daily_voice.mp3"
+VIDEO = OUT / "daily_video.mp4"
 SEGDIR = OUT / "audio_segments"
 MANIFEST = OUT / "sync_manifest.json"
 POSTER = OUT / "video_poster.png"
-W, H, FPS = base.WIDTH, base.HEIGHT, base.FPS
-RASHIS = base.RASHIS
-VOICE_NAME = base.VOICE_NAME
+SCRIPT = OUT / "daily_script.md"
+ASSETS = Path("assets")
+DEITY_ROOT = ASSETS / "deities"
+INTRO_ASSET = ASSETS / "intro_devotional.jpg"
+FONT_PATH = ASSETS / "NotoSansDevanagari-Regular.ttf"
 
-DEITIES = {
-    "हनुमान जी": "hanuman.jpg",
-    "महालक्ष्मी जी": "lakshmi.jpg",
-    "श्री गणेश जी": "ganesha.jpg",
-    "भगवान शिव": "shiva.jpg",
-    "सूर्य देव": "surya.jpg",
-    "भगवान विष्णु": "vishnu.jpg",
-    "शनि देव": "shani.jpg",
-}
+W, H, FPS = 1080, 1920, 30
+VOICE_NAME = "hi-IN-SwaraNeural"
+
+RASHIS = [
+    ("मेष", "मेष राशि", "हनुमान जी", "hanuman.jpg"),
+    ("वृषभ", "वृषभ राशि", "महालक्ष्मी जी", "lakshmi.jpg"),
+    ("मिथुन", "मिथुन राशि", "श्री गणेश जी", "ganesha.jpg"),
+    ("कर्क", "कर्क राशि", "भगवान शिव", "shiva.jpg"),
+    ("सिंह", "सिंह राशि", "सूर्य देव", "surya.jpg"),
+    ("कन्या", "कन्या राशि", "श्री गणेश जी", "ganesha.jpg"),
+    ("तुला", "तुला राशि", "महालक्ष्मी जी", "lakshmi.jpg"),
+    ("वृश्चिक", "वृश्चिक राशि", "हनुमान जी", "hanuman.jpg"),
+    ("धनु", "धनु राशि", "भगवान विष्णु", "vishnu.jpg"),
+    ("मकर", "मकर राशि", "शनि देव", "shani.jpg"),
+    ("कुंभ", "कुंभ राशि", "शनि देव", "shani.jpg"),
+    ("मीन", "मीन राशि", "भगवान विष्णु", "vishnu.jpg"),
+]
+
+DEITIES = {deity: filename for _, _, deity, filename in RASHIS}
 
 
 def run(cmd, timeout=1800):
-    result = subprocess.run([str(x) for x in cmd], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=timeout)
-    print(result.stdout[-6000:])
+    print("RUN:", " ".join(str(x) for x in cmd))
+    result = subprocess.run(
+        [str(x) for x in cmd],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        timeout=timeout,
+    )
+    print(result.stdout[-8000:])
     if result.returncode:
         raise RuntimeError(result.stdout[-12000:])
 
 
 def media_duration(ffmpeg, path):
-    result = subprocess.run([ffmpeg, "-i", str(path)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=60)
+    result = subprocess.run(
+        [ffmpeg, "-i", str(path)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=60,
+    )
     m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", result.stderr)
     if not m:
         raise RuntimeError(f"Cannot read media duration: {path}")
@@ -52,34 +82,61 @@ def media_duration(ffmpeg, path):
 
 
 async def speak(text, path):
-    await edge_tts.Communicate(text, VOICE_NAME, rate="+5%", volume="+0%").save(str(path))
+    await edge_tts.Communicate(
+        text,
+        VOICE_NAME,
+        rate="+5%",
+        volume="+0%",
+    ).save(str(path))
 
 
 def clean(text):
     return " ".join(x.strip() for x in text.splitlines() if x.strip())
 
 
+def load_script():
+    if not SCRIPT.exists():
+        raise RuntimeError("output/daily_script.md was not generated")
+    script = SCRIPT.read_text(encoding="utf-8").strip()
+    if not script:
+        raise RuntimeError("output/daily_script.md is empty")
+    return script
+
+
 def split_script(script):
+    """Create exactly intro + 12 Rashi + outro audio segments."""
     lines = script.splitlines()
     starts = []
     for idx, (key, label, deity, filename) in enumerate(RASHIS):
-        hits = [i for i, line in enumerate(lines) if re.match(rf"^\s*{re.escape(key)}\s+राशि(?:[।:]|\s)", line)]
+        hits = [
+            i for i, line in enumerate(lines)
+            if re.match(
+                rf"^\s*{re.escape(key)}\s+राशि(?:[।:]|\s)",
+                line,
+            )
+        ]
         if len(hits) != 1:
-            raise RuntimeError(f"Expected exactly one {key} राशि line; found {len(hits)}")
+            raise RuntimeError(
+                f"Expected exactly one {key} राशि heading; found {len(hits)}"
+            )
         starts.append((hits[0], idx, key, label))
+
     starts.sort()
     if [x[1] for x in starts] != list(range(12)):
         raise RuntimeError("Rashi narration is not in canonical order")
 
-    # Build the list with balanced delimiters. This explicit construction avoids
-    # the previous malformed `segments = [(...)]` expression.
     segments = []
     first_line = starts[0][0]
-    segments.append(("intro", "प्रस्तावना", clean("\n".join(lines[:first_line]))))
+    intro_text = clean("\n".join(lines[:first_line]))
+    if not intro_text:
+        intro_text = "आज के दैनिक वैदिक ज्योतिष में बारहों राशियों के लिए ग्रह गोचर के संकेत जानिए।"
+    segments.append(("intro", "प्रस्तावना", intro_text))
 
     for n, (line, idx, key, label) in enumerate(starts):
         end = starts[n + 1][0] if n + 1 < len(starts) else len(lines)
         text = clean("\n".join(lines[line:end]))
+        if not text:
+            raise RuntimeError(f"Empty narration segment for {key}")
         segments.append((key, label, text))
 
     last_key, last_label, last_text = segments[-1]
@@ -88,7 +145,11 @@ def split_script(script):
         segments[-1] = (last_key, last_label, clean(last_text[:m.start()]))
         outro = clean(m.group(1))
     else:
-        outro = "यह सामान्य चंद्र राशि आधारित वैदिक गोचर विश्लेषण है। व्यक्तिगत फलादेश के लिए जन्म कुंडली और दशा का अध्ययन आवश्यक होता है। वीडियो उपयोगी लगे तो लाइक, फॉलो और सब्सक्राइब करें। कल फिर मिलेंगे। नमस्कार!"
+        outro = (
+            "यह सामान्य चंद्र राशि आधारित वैदिक गोचर विश्लेषण है। "
+            "व्यक्तिगत फलादेश के लिए जन्म कुंडली और दशा का अध्ययन आवश्यक होता है। "
+            "वीडियो उपयोगी लगे तो लाइक, फॉलो और सब्सक्राइब करें। कल फिर मिलेंगे। नमस्कार!"
+        )
     segments.append(("outro", "समापन", outro))
 
     if len(segments) != 14 or any(not x[2] for x in segments):
@@ -109,22 +170,26 @@ def reset_outputs():
 
 
 def validate_assets():
-    root = Path("assets/deities")
+    if not FONT_PATH.exists():
+        raise RuntimeError(f"Missing bundled Devanagari font: {FONT_PATH}")
     result = {}
     for deity, filename in DEITIES.items():
-        path = root / filename
+        path = DEITY_ROOT / filename
         if not path.exists():
             raise RuntimeError(f"Missing deity artwork: {path}")
         with Image.open(path) as image:
             image = ImageOps.exif_transpose(image)
+            print(f"Deity asset: {deity} -> {path} {image.size}")
             if min(image.size) < 1200:
                 raise RuntimeError(f"Deity artwork below 1200px: {path} -> {image.size}")
         result[deity] = path
+    if not INTRO_ASSET.exists():
+        raise RuntimeError(f"Missing intro artwork: {INTRO_ASSET}")
     return result
 
 
 def font(size):
-    return base.get_font(size)
+    return ImageFont.truetype(str(FONT_PATH), size)
 
 
 def wrap(text, limit=38):
@@ -158,7 +223,10 @@ def background():
 def crop_cover(img, width, height):
     img = ImageOps.exif_transpose(img.convert("RGB"))
     scale = max(width / img.width, height / img.height)
-    resized = img.resize((int(img.width * scale), int(img.height * scale)), Image.Resampling.LANCZOS)
+    resized = img.resize(
+        (int(img.width * scale), int(img.height * scale)),
+        Image.Resampling.LANCZOS,
+    )
     left = max(0, (resized.width - width) // 2)
     top = max(0, (resized.height - height) // 2)
     return resized.crop((left, top, left + width, top + height))
@@ -171,19 +239,20 @@ def put_hero(canvas, source, box):
     image = ImageEnhance.Color(image).enhance(1.12)
     image = ImageEnhance.Contrast(image).enhance(1.05)
     mask = Image.new("L", (width, height), 0)
-    ImageDraw.Draw(mask).rounded_rectangle((0, 0, width - 1, height - 1), radius=40, fill=255)
+    ImageDraw.Draw(mask).rounded_rectangle(
+        (0, 0, width - 1, height - 1), radius=40, fill=255
+    )
     canvas.paste(image, (left, top), mask)
 
 
 def intro(script):
     output = SCENES / "000_intro.jpg"
-    source = ImageOps.exif_transpose(Image.open(base.INTRO_ASSET).convert("RGB"))
-    crop = source.crop((0, 0, source.width, max(1, int(source.height * 0.52))))
+    source = ImageOps.exif_transpose(Image.open(INTRO_ASSET).convert("RGB"))
+    hero = crop_cover(source, W - 100, 1030)
     canvas = background()
     gold = (247, 202, 77, 255)
     cream = (255, 244, 214, 255)
     dark = (28, 5, 31, 240)
-    hero = crop_cover(crop, W - 100, 1030)
     blurred = hero.filter(ImageFilter.GaussianBlur(26)).convert("RGBA")
     blurred.putalpha(105)
     canvas.alpha_composite(blurred, (50, 90))
@@ -268,7 +337,11 @@ def outro():
     box = draw.textbbox((0, 0), title, font=title_font)
     draw.text(((W - box[2] + box[0]) / 2, 610), title, font=title_font, fill=cream)
     y = 800
-    for line in ["आपका दिन शुभ और मंगलमय हो", "ईश्वर की कृपा और सकारात्मक ऊर्जा आपके साथ रहे", "कल फिर मिलेंगे नए ग्रह संकेतों के साथ"]:
+    for line in [
+        "आपका दिन शुभ और मंगलमय हो",
+        "ईश्वर की कृपा और सकारात्मक ऊर्जा आपके साथ रहे",
+        "कल फिर मिलेंगे नए ग्रह संकेतों के साथ",
+    ]:
         line_font = fit(draw, line, W - 180, 34, 24)
         box = draw.textbbox((0, 0), line, font=line_font)
         draw.text(((W - box[2] + box[0]) / 2, y), line, font=line_font, fill=cream)
@@ -286,7 +359,12 @@ def motion(ffmpeg, scene, seconds, index):
     fade = min(0.28, max(0.10, seconds / 6))
     fade_out_start = max(0.05, seconds - fade)
     filtergraph = f"zoompan=z={zoom}:x={x}:y={y}:d={frames}:s={W}x{H}:fps={FPS},fade=t=in:st=0:d={fade:.3f},fade=t=out:st={fade_out_start:.3f}:d={fade:.3f}"
-    run([ffmpeg, "-y", "-loop", "1", "-i", scene, "-vf", filtergraph, "-t", f"{seconds:.3f}", "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "19", "-pix_fmt", "yuv420p", output], 900)
+    run([
+        ffmpeg, "-y", "-loop", "1", "-i", scene,
+        "-vf", filtergraph, "-t", f"{seconds:.3f}", "-an",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "19",
+        "-pix_fmt", "yuv420p", output,
+    ], 900)
     return output
 
 
@@ -297,7 +375,12 @@ def concat_video(ffmpeg, clips):
     for index, clip in enumerate(clips):
         args += ["-i", clip]
         labels.append(f"[{index}:v]")
-    args += ["-filter_complex", "".join(labels) + f"concat=n={len(clips)}:v=1:a=0[v]", "-map", "[v]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "19", "-pix_fmt", "yuv420p", output]
+    args += [
+        "-filter_complex",
+        "".join(labels) + f"concat=n={len(clips)}:v=1:a=0[v]",
+        "-map", "[v]", "-c:v", "libx264", "-preset", "veryfast",
+        "-crf", "19", "-pix_fmt", "yuv420p", output,
+    ]
     run(args, 1800)
     return output
 
@@ -308,45 +391,73 @@ def concat_audio(ffmpeg, files):
     for index, path in enumerate(files):
         args += ["-i", path]
         labels.append(f"[{index}:a]")
-    args += ["-filter_complex", "".join(labels) + f"concat=n={len(files)}:v=0:a=1[a]", "-map", "[a]", "-c:a", "libmp3lame", "-b:a", "160k", VOICE]
+    args += [
+        "-filter_complex",
+        "".join(labels) + f"concat=n={len(files)}:v=0:a=1[a]",
+        "-map", "[a]", "-c:a", "libmp3lame", "-b:a", "160k", VOICE,
+    ]
     run(args, 1800)
 
 
 def attach_audio(ffmpeg, silent_video, total):
-    run([ffmpeg, "-y", "-i", silent_video, "-i", VOICE, "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-t", f"{total:.3f}", VIDEO], 1800)
+    run([
+        ffmpeg, "-y", "-i", silent_video, "-i", VOICE,
+        "-map", "0:v:0", "-map", "1:a:0",
+        "-c:v", "copy", "-c:a", "aac", "-b:a", "160k",
+        "-t", f"{total:.3f}", VIDEO,
+    ], 1800)
 
 
 def main():
     reset_outputs()
-    script = base.load_script()
+    script = load_script()
     segments = split_script(script)
     ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
     deity_paths = validate_assets()
-    audio_files, durations, manifest = [], [], []
+
+    audio_files = []
+    durations = []
+    manifest = []
     cursor = 0.0
 
+    # FIRST: generate and measure every narration segment.
+    # These measured durations become the immutable visual timeline.
     for index, (key, label, text) in enumerate(segments):
         path = SEGDIR / f"{index:02d}_{key}.mp3"
-        print(f"TTS {index + 1}/14: {label}")
+        print(f"TTS {index + 1}/14: {label} ({len(text)} chars)")
         asyncio.run(speak(text, path))
         seconds = media_duration(ffmpeg, path)
         audio_files.append(path)
         durations.append(seconds)
-        manifest.append({"index": index, "key": key, "label": label, "start_seconds": round(cursor, 3), "end_seconds": round(cursor + seconds, 3), "audio_seconds": round(seconds, 3), "text": text})
+        manifest.append({
+            "index": index,
+            "key": key,
+            "label": label,
+            "start_seconds": round(cursor, 3),
+            "end_seconds": round(cursor + seconds, 3),
+            "audio_seconds": round(seconds, 3),
+            "text": text,
+        })
         cursor += seconds
 
     concat_audio(ffmpeg, audio_files)
     total_audio = media_duration(ffmpeg, VOICE)
 
+    # SECOND: generate exactly one corresponding visual scene per segment.
     scenes = [intro(script)]
     for index, (key, label, deity, filename) in enumerate(RASHIS, start=1):
         narration = next(item[2] for item in segments if item[0] == key)
-        scenes.append(rashi_scene(index, key, label, deity, deity_paths[deity], narration))
+        scenes.append(
+            rashi_scene(index, key, label, deity, deity_paths[deity], narration)
+        )
     scenes.append(outro())
 
     if len(scenes) != len(segments):
-        raise RuntimeError(f"Scene/voice count mismatch: {len(scenes)} vs {len(segments)}")
+        raise RuntimeError(
+            f"Scene/voice count mismatch: {len(scenes)} vs {len(segments)}"
+        )
 
+    # THIRD: each scene receives the EXACT measured duration of its audio.
     clips = []
     for index, (scene, seconds) in enumerate(zip(scenes, durations)):
         manifest[index]["scene"] = str(scene)
@@ -357,12 +468,28 @@ def main():
     attach_audio(ffmpeg, silent_video, total_audio)
     total_video = media_duration(ffmpeg, VIDEO)
     delta = abs(total_video - total_audio)
-    print(f"V6-AUDIO-LED-DEVOTIONAL: video={total_video:.3f}s audio={total_audio:.3f}s delta={delta:.3f}s")
+    print(
+        f"AUDIO-LED SYNC: video={total_video:.3f}s "
+        f"audio={total_audio:.3f}s delta={delta:.3f}s"
+    )
     if delta > 0.20:
         raise RuntimeError("FINAL AUDIO/VIDEO SYNC FAILED")
 
     Image.open(scenes[0]).save(POSTER, "PNG")
-    MANIFEST.write_text(json.dumps({"renderer": "V6-AUDIO-LED-DEVOTIONAL", "method": "audio-segment-duration-is-master-timeline", "total_audio_seconds": round(total_audio, 3), "total_video_seconds": round(total_video, 3), "segments": manifest}, ensure_ascii=False, indent=2), encoding="utf-8")
+    MANIFEST.write_text(
+        json.dumps(
+            {
+                "renderer": "V7-AUDIO-LED-STANDALONE",
+                "method": "measured-TTS-segment-duration-is-master-timeline",
+                "total_audio_seconds": round(total_audio, 3),
+                "total_video_seconds": round(total_video, 3),
+                "segments": manifest,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     print("PRODUCTION VIDEO COMPLETE")
 
 
