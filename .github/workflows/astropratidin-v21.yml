@@ -52,38 +52,50 @@ jobs:
           print('EXACT MASTER LOGO: PASS')
           PY
 
-      - name: Verify V21 architecture contract
+      - name: Verify V21 renderer architecture
         run: |
           python - <<'PY'
           from pathlib import Path
-          import ast
+          from video_engine import premium_entry as premium
+          from video_engine import premium_entry_v21_1 as hardened
+          from video_engine import visual_profiles as profiles
 
-          root=Path('video_engine')
-          entry=root/'premium_entry_v21_1.py'
-          profiles=root/'visual_profiles.py'
-          base=root/'premium_entry.py'
-          required_files=[entry,profiles,base]
-          for p in required_files:
-              if not p.exists(): raise SystemExit(f'Missing required renderer file: {p}')
+          required = [
+              (premium, 'MASTER_LOGO'),
+              (premium, '_load_master_logo'),
+              (premium, 'premium_intro'),
+              (premium, 'premium_rashi'),
+              (premium, 'premium_outro'),
+              (hardened, 'hardened_motion'),
+              (hardened, 'motion_profile'),
+              (hardened, '_normalize_sar'),
+          ]
+          for module, attr in required:
+              if not hasattr(module, attr):
+                  raise SystemExit(f'Missing V21 renderer capability: {module.__name__}.{attr}')
 
-          forbidden=['intro_devotional.jpg','विस्तृत फलादेश आवाज़ में सुनें','विस्तृत फलादेश आपकी आवाज़ में','DAILY ASTRO','_brand_logo(']
-          for p in [entry,base]:
-              text=p.read_text(encoding='utf-8')
-              for x in forbidden:
-                  if x in text: raise SystemExit(f'Forbidden legacy content in {p}: {x}')
-              ast.parse(text,filename=str(p))
-          ast.parse(profiles.read_text(encoding='utf-8'),filename=str(profiles))
+          logo = Path(premium.MASTER_LOGO)
+          expected = Path('assets/AstroPratidin Logo.png').resolve()
+          if logo.resolve() != expected:
+              raise SystemExit(f'Renderer is not wired to exact master logo: {logo}')
 
-          profile_text=profiles.read_text(encoding='utf-8')
-          for x in ['RASHI_PROFILES','MOTION']:
-              if x not in profile_text: raise SystemExit(f'Missing data-driven architecture: {x}')
+          rashi_keys = {x[0] for x in premium.base.RASHIS}
+          if set(profiles.RASHI_PROFILES) != rashi_keys:
+              raise SystemExit('Rashi visual-profile coverage mismatch')
+          if set(profiles.MOTION) != {'intro','push_in','drift_right','drift_left'}:
+              raise SystemExit('Motion profile coverage mismatch')
 
-          entry_text=entry.read_text(encoding='utf-8')
-          for x in ['AstroPratidin Logo.png','900','premium_intro','premium_rashi']:
-              if x not in entry_text: raise SystemExit(f'Missing V21 renderer capability: {x}')
+          for path in Path('video_engine').rglob('*.py'):
+              text = path.read_text(encoding='utf-8', errors='ignore')
+              for item in ['intro_devotional.jpg','विस्तृत फलादेश आवाज़ में सुनें','विस्तृत फलादेश आपकी आवाज़ में','DAILY ASTRO']:
+                  if item in text:
+                      raise SystemExit(f'Forbidden legacy content in {path}: {item}')
 
-          print('V21 ARCHITECTURE CONTRACT: PASS')
-          print('Behavioral media validation is performed after rendering; source-string implementation details are intentionally not required.')
+          print('V21 RENDERER ARCHITECTURE: PASS')
+          print('MASTER LOGO WIRING: PASS')
+          print('12 RASHI PROFILES: PASS')
+          print('MOTION + SAR NORMALIZATION CAPABILITY: PASS')
+          print('NO LEGACY RENDERER CONTENT: PASS')
           PY
 
       - name: Compile
@@ -92,7 +104,7 @@ jobs:
       - name: Generate daily content
         run: python -m astro_engine.main
 
-      - name: Render AstroPratidin V21.4.2 premium production
+      - name: Render AstroPratidin V21.5 premium production
         run: python -m video_engine.premium_entry_v21_1
 
       - name: Output QA
@@ -172,7 +184,7 @@ jobs:
           print('14 SCENES / 1080x1920: PASS')
           print('NO LEGACY FOOTER: PASS')
           print('AUDIO-LED SYNC: PASS')
-          print('V21 OUTPUT QA: PASS')
+          print('V21.5 OUTPUT QA: PASS')
           PY
 
       - name: Package production artifact
