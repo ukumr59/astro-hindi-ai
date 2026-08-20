@@ -1,2 +1,2 @@
-ASTRO HINDI DEVOTIONAL VIDEO V17
-Premium renderer + exact master AstroPratidin branding + quality gate
+ASTRO HINDI DEVOTIONAL VIDEO V18
+Premium renderer + exact master AstroPratidin branding + Devanagari/Latin glyph regression fix
