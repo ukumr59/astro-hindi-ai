@@ -1,0 +1,214 @@
+name: AstroPratidin V21.9.5 Final Production
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: astropratidin-v21-final-production
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout V21.9.5 branch
+        uses: actions/checkout@v4
+        with:
+          ref: v21-premium-9-5-architecture
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          ffmpeg -version | head -n 1
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Verify exact AstroPratidin master logo
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import subprocess
+          from PIL import Image
+          p=Path('assets/AstroPratidin Logo.png')
+          expected='9202b7441135ba96bbefd97b782cad65e03f3926'
+          if not p.exists(): raise SystemExit('Exact master logo missing')
+          actual=subprocess.check_output(['git','hash-object',str(p)],text=True).strip()
+          if actual != expected: raise SystemExit(f'Wrong logo asset: {actual}')
+          with Image.open(p) as im:
+              if min(im.size)<200: raise SystemExit(f'Logo resolution too small: {im.size}')
+          print('EXACT MASTER LOGO: PASS')
+          PY
+
+      - name: Verify V21.9.5 renderer architecture
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import inspect
+          from video_engine import premium_entry as premium
+          from video_engine import premium_entry_v21_1 as hardened
+          from video_engine import visual_profiles as profiles
+          required=[
+              (premium,'MASTER_LOGO'),(premium,'_load_master_logo'),(premium,'_safe_display'),
+              (premium,'_draw_separator'),(premium,'premium_intro'),(premium,'premium_rashi'),(premium,'premium_outro'),
+              (hardened,'hardened_motion'),(hardened,'motion_profile'),(hardened,'_normalize_sar')]
+          for module,attr in required:
+              if not hasattr(module,attr): raise SystemExit(f'Missing capability: {module.__name__}.{attr}')
+          expected=Path('assets/AstroPratidin Logo.png').resolve()
+          if Path(premium.MASTER_LOGO).resolve()!=expected: raise SystemExit('Renderer is not wired to exact master logo')
+          rashi_keys={x[0] for x in premium.base.RASHIS}
+          if set(profiles.RASHI_PROFILES)!=rashi_keys: raise SystemExit('Rashi visual-profile coverage mismatch')
+          if set(profiles.MOTION)!={'intro','push_in','drift_right','drift_left'}: raise SystemExit('Motion profile coverage mismatch')
+          active_files=[Path('video_engine/premium_entry.py'),Path('video_engine/premium_entry_v21_1.py'),Path('video_engine/visual_profiles.py')]
+          forbidden=['intro_devotional.jpg','विस्तृत फलादेश आवाज़ में सुनें','विस्तृत फलादेश आपकी आवाज़ में','DAILY ASTRO']
+          for path in active_files:
+              text=path.read_text(encoding='utf-8',errors='ignore')
+              for item in forbidden:
+                  if item in text: raise SystemExit(f'Forbidden active-renderer content in {path}: {item}')
+          # The renderer deliberately contains sanitizer literals for characters that
+          # must never reach the output. Test the sanitizer at runtime instead of
+          # falsely rejecting the implementation for containing its own guard list.
+          dangerous=['•','□','�','…']
+          for sample in dangerous:
+              cleaned=premium._safe_display('परीक्षण'+sample+'पाठ')
+              if any(ch in cleaned for ch in dangerous):
+                  raise SystemExit(f'Safe-display sanitizer failed for {repr(sample)}')
+          premium_src=inspect.getsource(premium.main); hardened_src=inspect.getsource(hardened.main)
+          for needle in ['base.intro = premium_intro','base.rashi_scene = premium_rashi','base.outro = premium_outro','base.motion = premium_motion']:
+              if needle not in premium_src: raise SystemExit(f'V21 hook wiring missing: {needle}')
+          for needle in ['base.intro = v21.premium_intro','base.rashi_scene = v21.premium_rashi','base.outro = v21.premium_outro','base.motion = hardened_motion']:
+              if needle not in hardened_src: raise SystemExit(f'Hardened hook wiring missing: {needle}')
+          print('V21.9.5 RENDERER ARCHITECTURE: PASS')
+          print('EXACT MASTER LOGO WIRING: PASS')
+          print('12 RASHI VISUAL PROFILES: PASS')
+          print('VECTOR-SEPARATOR / SAFE-DISPLAY GUARD: PASS')
+          print('HARDENED MOTION + SAR NORMALIZATION: PASS')
+          print('PRODUCTION HOOK WIRING: PASS')
+          PY
+
+      - name: Compile
+        run: python -m py_compile video_engine/render_sync.py video_engine/visual_profiles.py video_engine/premium_entry.py video_engine/premium_entry_v21_1.py astro_engine/main.py astro_engine/rules.py content_engine/script.py
+
+      - name: Generate daily content
+        run: python -m astro_engine.main
+
+      - name: Validate Hindi content before render
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path('output/daily_script.md')
+          if not p.exists(): raise SystemExit('daily_script.md missing')
+          text=p.read_text(encoding='utf-8').strip()
+          if not text: raise SystemExit('daily_script.md is empty')
+          rashis=['मेष','वृषभ','मिथुन','कर्क','सिंह','कन्या','तुला','वृश्चिक','धनु','मकर','कुंभ','मीन']
+          lines=[x.strip() for x in text.splitlines() if x.strip()]
+          counts={r:sum(bool(re.match(rf'^{re.escape(r)} राशि(?:[।:]|\s)',x)) for x in lines) for r in rashis}
+          bad=[r for r,n in counts.items() if n!=1]
+          if bad: raise SystemExit(f'Rashi heading coverage invalid: {bad}')
+          for token in ['...','…','□','�','विस्तृत फलादेश आवाज़ में सुनें','विस्तृत फलादेश आपकी आवाज़ में']:
+              if token in text: raise SystemExit(f'Forbidden/truncated content: {token}')
+          starts=[]
+          for i,line in enumerate(lines):
+              for r in rashis:
+                  if re.match(rf'^{re.escape(r)} राशि(?:[।:]|\s)',line): starts.append((i,r))
+          starts.sort()
+          if [r for _,r in starts]!=rashis: raise SystemExit('Rashi narration is not in canonical order')
+          for i,(pos,r) in enumerate(starts):
+              end=starts[i+1][0] if i+1<len(starts) else len(lines)
+              block=' '.join(lines[pos:end]); words=block.split()
+              if len(words)<12: raise SystemExit(f'{r} narration too short: {len(words)} words')
+              if len(words)>110: raise SystemExit(f'{r} narration too long: {len(words)} words')
+              if not any(ch in block for ch in '।!?'): raise SystemExit(f'{r} narration has no sentence punctuation')
+              if 'सकारात्मक जल्दबाजी' in block: raise SystemExit(f'{r} contains malformed contradictory phrase')
+          print('HINDI CONTENT QA: PASS')
+          print('12 RASHIS / CANONICAL ORDER: PASS')
+          print('NO TRUNCATION GLYPHS: PASS')
+          print('SENTENCE COMPLETENESS: PASS')
+          PY
+
+      - name: Render AstroPratidin V21.9.5 premium production
+        run: python -m video_engine.premium_entry_v21_1
+
+      - name: Output QA
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json, subprocess
+          import numpy as np
+          from PIL import Image
+          out=Path('output')
+          scenes=sorted((out/'video_scenes').glob('*.jpg')); motions=sorted((out/'video_scenes').glob('motion_*.mp4'))
+          if len(scenes)!=14: raise SystemExit(f'Expected 14 rendered scenes, got {len(scenes)}')
+          if len(motions)!=14: raise SystemExit(f'Expected 14 motion clips, got {len(motions)}')
+          for p in scenes:
+              with Image.open(p) as im:
+                  if im.size!=(1080,1920): raise SystemExit(f'Bad dimensions: {p.name} {im.size}')
+          def probe(path):
+              raw=subprocess.check_output(['ffprobe','-v','error','-select_streams','v:0','-show_entries','stream=width,height,sample_aspect_ratio,pix_fmt,nb_frames','-of','json',str(path)],text=True)
+              streams=json.loads(raw).get('streams',[])
+              if not streams: raise SystemExit(f'No video stream: {path}')
+              return streams[0]
+          for p in motions:
+              st=probe(p)
+              if (st.get('width'),st.get('height'))!=(1080,1920): raise SystemExit(f'Bad motion dimensions: {p.name}')
+              if st.get('sample_aspect_ratio')!='1:1': raise SystemExit(f'Non-square motion SAR: {p.name}')
+              if st.get('pix_fmt')!='yuv420p': raise SystemExit(f'Unexpected motion pixel format: {p.name}')
+              if not st.get('nb_frames') or int(st['nb_frames'])<2: raise SystemExit(f'Motion clip has insufficient frames: {p.name}')
+          final=out/'daily_video.mp4'
+          if not final.exists(): raise SystemExit('Final video missing')
+          st=probe(final)
+          if (st.get('width'),st.get('height'))!=(1080,1920): raise SystemExit('Final video dimensions invalid')
+          if st.get('sample_aspect_ratio')!='1:1': raise SystemExit('Final video SAR invalid')
+          if st.get('pix_fmt')!='yuv420p': raise SystemExit('Final video pixel format invalid')
+          intro=out/'video_scenes/000_intro.jpg'
+          with Image.open(intro).convert('RGB') as im, Image.open('assets/AstroPratidin Logo.png').convert('RGBA') as logo:
+              ratio=min(900/logo.width,900/logo.height); logo=logo.resize((max(1,int(logo.width*ratio)),max(1,int(logo.height*ratio))),Image.Resampling.LANCZOS)
+              x=(1080-logo.width)//2; y=610-logo.height//2
+              actual=np.asarray(im.crop((x,y,x+logo.width,y+logo.height)),dtype=np.int16); target=np.asarray(logo.convert('RGB'),dtype=np.int16)
+              alpha=np.asarray(logo.getchannel('A'),dtype=np.uint8); mask=alpha>=128
+              if int(mask.sum())<10000: raise SystemExit('Master logo alpha mask unexpectedly small')
+              mae=np.abs(actual[mask]-target[mask]).mean()
+              if mae>32: raise SystemExit(f'Central master-logo visual mismatch: {mae:.1f}')
+          for p in out.rglob('*'):
+              if p.is_file() and p.suffix.lower() in {'.md','.txt','.json'}:
+                  t=p.read_text(encoding='utf-8',errors='ignore')
+                  for token in ['•','□','�','…','विस्तृत फलादेश आवाज़ में सुनें','विस्तृत फलादेश आपकी आवाज़ में']:
+                      if token in t: raise SystemExit(f'Forbidden output text in {p}: {token}')
+          manifest=json.loads((out/'sync_manifest.json').read_text(encoding='utf-8'))
+          if len(manifest.get('segments',[]))!=14: raise SystemExit('Expected 14 sync segments')
+          delta=abs(float(manifest.get('total_video_seconds',0))-float(manifest.get('total_audio_seconds',0)))
+          if delta>0.20: raise SystemExit(f'Audio/video duration delta exceeds 0.20s: {delta:.3f}s')
+          print('14 SCENES / 1080x1920: PASS')
+          print('14 MOTION CLIPS / SAR 1:1 / yuv420p: PASS')
+          print('EXACT CENTRAL MASTER LOGO: PASS')
+          print('NO TOFU/REPLACEMENT GLYPHS: PASS')
+          print('NO LEGACY/TRUNCATED COPY: PASS')
+          print('AUDIO-LED SYNC <= 0.20s: PASS')
+          print('V21.9.5 OUTPUT QA: PASS')
+          PY
+
+      - name: Package production artifact
+        run: zip -qr daily-astro-output-v21.9.5-premium.zip output
+
+      - name: Upload production artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-astro-output-v21.9.5-premium
+          path: daily-astro-output-v21.9.5-premium.zip
+          if-no-files-found: error
+          retention-days: 14

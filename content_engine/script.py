@@ -1,5 +1,6 @@
-"""Concise daily Hindi astrology script for social-first videos."""
+"""Production-grade daily Hindi astrology script generation."""
 from datetime import datetime
+import re
 from astro_engine.rules import rashi_summary
 
 
@@ -8,29 +9,48 @@ def date_text(value):
 
 
 def clean(text):
-    return " ".join((text or "").replace("।।", "।").split())
+    return " ".join((text or "").replace("।।", "।").split()).strip()
+
+
+def complete_sentences(text, limit=2):
+    text = clean(text)
+    if not text:
+        return []
+    parts = [clean(x) for x in re.split(r"(?<=[।!?])\s+", text) if clean(x)]
+    if parts:
+        return parts[:limit]
+    return [text]
 
 
 def strongest(summary):
-    items = sorted(summary.get("influences", []), key=lambda x: abs(x.get("score", 0)), reverse=True)
-    return clean(items[0].get("text", "")) if items else ""
+    items = sorted(
+        summary.get("influences", []),
+        key=lambda x: abs(x.get("score", 0)),
+        reverse=True,
+    )
+    if not items:
+        return ""
+    sentences = complete_sentences(items[0].get("text", ""), limit=2)
+    return " ".join(sentences)
 
 
 def rashi_line(summary):
-    rashi = summary.get("rashi", "राशि")
+    rashi = clean(summary.get("rashi", "राशि"))
     overall = summary.get("overall", "मिश्रित")
     lead = {
         "अनुकूल": "आज का दिन कुल मिलाकर अनुकूल संकेत दे रहा है।",
         "सावधानी": "आज धैर्य और सावधानी के साथ आगे बढ़ना बेहतर रहेगा।",
     }.get(overall, "आज मिश्रित संकेत हैं; संतुलित निर्णय लेना बेहतर रहेगा।")
     influence = strongest(summary)
-    if influence:
-        influence = " ".join(influence.split()[:28])
     advice = {
         "अनुकूल": "काम में अवसरों का लाभ लें और धन संबंधी निर्णय सोच-समझकर करें।",
         "सावधानी": "जल्दबाजी से बचें, खर्च नियंत्रित रखें और रिश्तों में संयम रखें।",
     }.get(overall, "काम, धन और रिश्तों में स्पष्ट संवाद तथा संतुलन रखें।")
-    return f"{rashi} राशि। {lead} {influence} {advice}"
+    pieces = [f"{rashi} राशि।", lead]
+    if influence:
+        pieces.append(influence if influence.endswith(("।", "!", "?")) else influence + "।")
+    pieces.append(advice)
+    return " ".join(pieces)
 
 
 def build_daily_script(date, positions, events):
@@ -43,7 +63,7 @@ def build_daily_script(date, positions, events):
         for event in events[:2]:
             desc = clean(getattr(event, "description_hi", ""))
             if desc:
-                lines.append(desc)
+                lines.append(desc if desc.endswith(("।", "!", "?")) else desc + "।")
     else:
         lines.append("आज कोई प्रमुख राशि परिवर्तन दर्ज नहीं हुआ है; इसलिए वर्तमान ग्रह स्थितियों के आधार पर दैनिक संकेत देखेंगे।")
     lines.append("अब जानते हैं बारहों राशियों पर आज के ग्रह गोचर का प्रभाव।")
