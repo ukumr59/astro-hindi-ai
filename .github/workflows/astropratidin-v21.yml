@@ -10,6 +10,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  YOUTUBE_TOKEN_SECRET: ASTROPRATIDIN_YOUTUBE_TOKEN_JSON
+
 jobs:
   production:
     runs-on: ubuntu-latest
@@ -201,6 +204,39 @@ jobs:
 
       - name: Package production artifact
         run: zip -qr daily-astro-output-v21.9.5-premium.zip output
+
+      - name: Upload to YouTube
+        env:
+          YOUTUBE_TOKEN_JSON: ${{ secrets.ASTROPRATIDIN_YOUTUBE_TOKEN_JSON }}
+        run: |
+          set -euo pipefail
+          test -n "$YOUTUBE_TOKEN_JSON" || { echo 'Missing ASTROPRATIDIN_YOUTUBE_TOKEN_JSON repository secret'; exit 1; }
+          python -m pip install --disable-pip-version-check google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2
+          python - <<'PY'
+          import json, os, pathlib, datetime
+          from google.oauth2.credentials import Credentials
+          from googleapiclient.discovery import build
+          from googleapiclient.http import MediaFileUpload
+          token=json.loads(os.environ['YOUTUBE_TOKEN_JSON'])
+          scopes=['https://www.googleapis.com/auth/youtube.upload']
+          creds=Credentials.from_authorized_user_info(token, scopes=scopes)
+          youtube=build('youtube','v3',credentials=creds)
+          today=datetime.date.today().isoformat()
+          script=pathlib.Path('output/daily_script.md').read_text(encoding='utf-8')
+          title=f'आज का राशिफल | AstroPratidin | {today}'
+          description=('AstroPratidin — आपका दैनिक ज्योतिष साथी।\n\n'+script+'\n\n#AstroPratidin #दैनिकराशिफल #ज्योतिष #राशिफल')[:4900]
+          body={'snippet':{'title':title,'description':description,'categoryId':'22','tags':['AstroPratidin','दैनिक राशिफल','राशिफल','ज्योतिष','आज का राशिफल']},'status':{'privacyStatus':'public','selfDeclaredMadeForKids':False}}
+          media=MediaFileUpload('output/daily_video.mp4',mimetype='video/mp4',chunksize=8*1024*1024,resumable=True)
+          request=youtube.videos().insert(part='snippet,status',body=body,media_body=media)
+          response=None
+          while response is None:
+              status,response=request.next_chunk()
+              if status: print(f'YouTube upload: {int(status.progress()*100)}%')
+          vid=response['id']
+          print(f'YOUTUBE_VIDEO_ID={vid}')
+          print(f'YOUTUBE_URL=https://www.youtube.com/watch?v={vid}')
+          print(f"YOUTUBE_REQUESTED_VISIBILITY={body['status']['privacyStatus']}")
+          PY
 
       - name: Upload production artifact
         uses: actions/upload-artifact@v4
