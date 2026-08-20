@@ -29,9 +29,9 @@ jobs:
           pip install -r requirements.txt
 
       - name: Syntax smoke test
-        run: python -m py_compile video_engine/render_sync.py video_engine/premium_entry.py
+        run: python -m py_compile video_engine/render_sync.py video_engine/premium_entry.py video_engine/premium_entry_v18.py
 
-      - name: Validate bundled devotional assets
+      - name: Validate bundled devotional and brand assets
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -45,8 +45,10 @@ jobs:
                   im = ImageOps.exif_transpose(im)
                   print(name, im.size, im.mode)
                   if min(im.size) < 1200: raise SystemExit(f'Artwork below 1200px: {p} -> {im.size}')
-          for p in ['assets/NotoSansDevanagari-Regular.ttf','assets/intro_devotional.jpg']:
+          for p in ['assets/NotoSansDevanagari-Regular.ttf','assets/intro_devotional.jpg','assets/brand/astropratidin_logo.webp']:
               if not Path(p).exists(): raise SystemExit(f'Missing required asset: {p}')
+          with Image.open('assets/brand/astropratidin_logo.webp') as im:
+              print('Master AstroPratidin logo:', im.size, im.mode)
           PY
 
       - name: Clean previous generated output
@@ -58,8 +60,8 @@ jobs:
       - name: Generate daily Hindi astrology content
         run: python -m astro_engine.main
 
-      - name: Generate V5 premium audio-led devotional video
-        run: python -m video_engine.premium_entry
+      - name: Generate V18 premium audio-led devotional video
+        run: python -m video_engine.premium_entry_v18
 
       - name: Validate generated outputs
         run: |
