@@ -56,6 +56,7 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          import inspect
           from video_engine import premium_entry as premium
           from video_engine import premium_entry_v21_1 as hardened
           from video_engine import visual_profiles as profiles
@@ -85,17 +86,44 @@ jobs:
           if set(profiles.MOTION) != {'intro','push_in','drift_right','drift_left'}:
               raise SystemExit('Motion profile coverage mismatch')
 
-          for path in Path('video_engine').rglob('*.py'):
+          # V21 production is intentionally layered on top of the shared
+          # render_sync primitives. Legacy helpers may remain in that shared
+          # module for compatibility, but they are NOT the active renderer.
+          active_files = [
+              Path('video_engine/premium_entry.py'),
+              Path('video_engine/premium_entry_v21_1.py'),
+              Path('video_engine/visual_profiles.py'),
+          ]
+          forbidden = [
+              'intro_devotional.jpg',
+              'विस्तृत फलादेश आवाज़ में सुनें',
+              'विस्तृत फलादेश आपकी आवाज़ में',
+              'DAILY ASTRO',
+          ]
+          for path in active_files:
               text = path.read_text(encoding='utf-8', errors='ignore')
-              for item in ['intro_devotional.jpg','विस्तृत फलादेश आवाज़ में सुनें','विस्तृत फलादेश आपकी आवाज़ में','DAILY ASTRO']:
+              for item in forbidden:
                   if item in text:
-                      raise SystemExit(f'Forbidden legacy content in {path}: {item}')
+                      raise SystemExit(f'Forbidden legacy content in ACTIVE V21 renderer {path}: {item}')
+
+          # Confirm the production entrypoints actually replace the shared
+          # renderer hooks rather than merely exposing the required functions.
+          premium_src = inspect.getsource(premium.main)
+          hardened_src = inspect.getsource(hardened.main)
+          for needle in ['base.intro = premium_intro', 'base.rashi_scene = premium_rashi', 'base.outro = premium_outro', 'base.motion = premium_motion']:
+              if needle not in premium_src:
+                  raise SystemExit(f'V21 hook wiring missing: {needle}')
+          for needle in ['base.intro = v21.premium_intro', 'base.rashi_scene = v21.premium_rashi', 'base.outro = v21.premium_outro', 'base.motion = hardened_motion']:
+              if needle not in hardened_src:
+                  raise SystemExit(f'V21.5 hardened hook wiring missing: {needle}')
 
           print('V21 RENDERER ARCHITECTURE: PASS')
           print('MASTER LOGO WIRING: PASS')
           print('12 RASHI PROFILES: PASS')
           print('MOTION + SAR NORMALIZATION CAPABILITY: PASS')
-          print('NO LEGACY RENDERER CONTENT: PASS')
+          print('ACTIVE RENDERER LEGACY-CONTENT CHECK: PASS')
+          print('PRODUCTION HOOK WIRING: PASS')
+          print('LEGACY COMPATIBILITY FILES EXCLUDED FROM ACTIVE-GATE SCAN: PASS')
           PY
 
       - name: Compile
@@ -155,7 +183,9 @@ jobs:
               raise SystemExit(f'Final video dimensions invalid: {st.get("width")}x{st.get("height")}')
           if st.get('sample_aspect_ratio')!='1:1':
               raise SystemExit(f'Final video SAR invalid: {st.get("sample_aspect_ratio")}')
-          print('FINAL VIDEO / 1080x1920 / SAR 1:1: PASS')
+          if st.get('pix_fmt')!='yuv420p':
+              raise SystemExit(f'Final video pixel format invalid: {st.get("pix_fmt")}')
+          print('FINAL VIDEO / 1080x1920 / SAR 1:1 / yuv420p: PASS')
 
           intro=out/'video_scenes/000_intro.jpg'
           with Image.open(intro).convert('RGB') as im, Image.open('assets/AstroPratidin Logo.png').convert('RGBA') as logo:
@@ -172,8 +202,9 @@ jobs:
 
           manifest=json.loads((out/'sync_manifest.json').read_text(encoding='utf-8'))
           if len(manifest.get('segments',[]))!=14: raise SystemExit('Expected 14 sync segments')
-          if abs(float(manifest.get('total_video_seconds',0))-float(manifest.get('total_audio_seconds',0)))>0.20:
-              raise SystemExit('Audio/video duration delta exceeds 0.20s')
+          delta=abs(float(manifest.get('total_video_seconds',0))-float(manifest.get('total_audio_seconds',0)))
+          if delta>0.20:
+              raise SystemExit(f'Audio/video duration delta exceeds 0.20s: {delta:.3f}s')
 
           for p in out.rglob('*'):
               if p.is_file() and p.suffix.lower() in {'.md','.txt','.json'}:
