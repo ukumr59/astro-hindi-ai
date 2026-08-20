@@ -11,7 +11,7 @@ permissions:
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Checkout project
@@ -48,11 +48,14 @@ jobs:
               raise SystemExit('Missing bundled Devanagari font')
           PY
 
+      - name: Renderer syntax smoke test
+        run: python -m py_compile video_engine/render_sync.py
+
       - name: Generate daily Hindi astrology content
         run: python -m astro_engine.main
 
       - name: Generate devotional video - AUDIO LED SYNC
-        run: python -m video_engine.run_audio_led
+        run: python -m video_engine.render_sync
 
       - name: Validate generated outputs
         run: |
@@ -69,7 +72,7 @@ jobs:
       - name: Upload daily production bundle
         uses: actions/upload-artifact@v4
         with:
-          name: daily-astro-output-production-v4
+          name: daily-astro-output-production-v8
           path: |
             output/daily_script.md
             output/planetary_report.txt
