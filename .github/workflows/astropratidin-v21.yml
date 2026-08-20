@@ -18,20 +18,24 @@ jobs:
         with:
           ref: v21-premium-9-5-architecture
           fetch-depth: 1
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           cache: pip
+
       - name: Install FFmpeg
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
           ffmpeg -version | head -n 1
+
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+
       - name: Verify exact AstroPratidin master logo
         run: |
           python - <<'PY'
@@ -47,13 +51,13 @@ jobs:
               if min(im.size)<200: raise SystemExit(f'Logo resolution too small: {im.size}')
           print('EXACT MASTER LOGO: PASS')
           PY
-      - name: Verify V21.4 architecture contract
+
+      - name: Verify V21.4.2 architecture contract
         run: |
           python - <<'PY'
           from pathlib import Path
           s=Path('video_engine/premium_entry.py').read_text(encoding='utf-8')
           h=Path('video_engine/premium_entry_v21_1.py').read_text(encoding='utf-8')
-          r=Path('video_engine/render_sync.py').read_text(encoding='utf-8')
           p=Path('video_engine/visual_profiles.py')
           forbidden=['intro_devotional.jpg','विस्तृत फलादेश आवाज़ में सुनें','विस्तृत फलादेश आपकी आवाज़ में','DAILY ASTRO','_brand_logo(']
           for x in forbidden:
@@ -61,40 +65,69 @@ jobs:
           required=['AstroPratidin Logo.png','_load_master_logo(900, 900)','RASHI_PROFILES','MOTION']
           for x in required:
               if x not in s: raise SystemExit(f'Missing V21 renderer requirement: {x}')
-          for x in ['hardened_motion','-frames:v','-movflags','safe=True','premium_intro','premium_rashi']:
-              if x not in h: raise SystemExit(f'Missing V21.2 hardening requirement: {x}')
-          # V21.4 assembly contract: normalize every clip before concat and
-          # normalize the final concat stream. Do not require a brittle
-          # literal such as scale=1080:1920 because the renderer calculates
-          # the normalized dimensions from W/H constants.
-          for x in ['setsar=1','format=yuv420p','concat=n=','normalized =','concat_inputs =']:
-              if x not in r: raise SystemExit(f'Missing V21.4 assembly normalization: {x}')
-          if 'scale_w = int(W * 1.08)' not in r or 'scale_h = int(H * 1.08)' not in r:
-              raise SystemExit('Missing V21.4 motion normalization dimensions')
+          for x in ['hardened_motion','_normalize_sar','setsar=1','scale=1080:1920','format=yuv420p','-frames:v','-movflags','safe=True','premium_intro','premium_rashi']:
+              if x not in h: raise SystemExit(f'Missing V21.4.2 hardening requirement: {x}')
           if not p.exists(): raise SystemExit('visual_profiles.py missing')
-          print('V21.4 ARCHITECTURE CONTRACT: PASS')
+          print('V21.4.2 ARCHITECTURE CONTRACT: PASS')
           PY
+
       - name: Compile
         run: python -m py_compile video_engine/render_sync.py video_engine/visual_profiles.py video_engine/premium_entry.py video_engine/premium_entry_v21_1.py
+
       - name: Generate daily content
         run: python -m astro_engine.main
-      - name: Render AstroPratidin V21.4 premium production
+
+      - name: Render AstroPratidin V21.4.2 premium production
         run: python -m video_engine.premium_entry_v21_1
+
       - name: Output QA
         run: |
           python - <<'PY'
           from pathlib import Path
           import json
+          import subprocess
           import numpy as np
           from PIL import Image
+
           out=Path('output')
           scenes=sorted((out/'video_scenes').glob('*.jpg'))
           motions=sorted((out/'video_scenes').glob('motion_*.mp4'))
           if len(scenes)!=14: raise SystemExit(f'Expected 14 rendered scenes, got {len(scenes)}')
           if len(motions)!=14: raise SystemExit(f'Expected 14 motion clips, got {len(motions)}')
+
           for p in scenes:
               with Image.open(p) as im:
                   if im.size!=(1080,1920): raise SystemExit(f'Bad dimensions: {p.name} {im.size}')
+
+          def probe(path):
+              raw=subprocess.check_output([
+                  'ffprobe','-v','error','-select_streams','v:0',
+                  '-show_entries','stream=width,height,sample_aspect_ratio,pix_fmt',
+                  '-of','json',str(path)
+              ],text=True)
+              streams=json.loads(raw).get('streams',[])
+              if not streams: raise SystemExit(f'No video stream: {path}')
+              return streams[0]
+
+          for p in motions:
+              st=probe(p)
+              if (st.get('width'),st.get('height'))!=(1080,1920):
+                  raise SystemExit(f'Bad motion dimensions: {p.name} {st.get("width")}x{st.get("height")}')
+              if st.get('sample_aspect_ratio') not in ('1:1','1:1'):
+                  raise SystemExit(f'Non-square motion SAR: {p.name} {st.get("sample_aspect_ratio")}')
+              if st.get('pix_fmt')!='yuv420p':
+                  raise SystemExit(f'Unexpected motion pixel format: {p.name} {st.get("pix_fmt")}')
+          print('14 MOTION CLIPS / 1080x1920 / SAR 1:1 / yuv420p: PASS')
+
+          final=out/'daily_video.mp4'
+          if not final.exists(): raise SystemExit('Final video missing')
+          st=probe(final)
+          if (st.get('width'),st.get('height'))!=(1080,1920):
+              raise SystemExit(f'Final video dimensions invalid: {st.get("width")}x{st.get("height")}')
+          if st.get('sample_aspect_ratio')!='1:1':
+              raise SystemExit(f'Final video SAR invalid: {st.get("sample_aspect_ratio")}')
+          print('FINAL VIDEO / 1080x1920 / SAR 1:1: PASS')
+
           intro=out/'video_scenes/000_intro.jpg'
           with Image.open(intro).convert('RGB') as im, Image.open('assets/AstroPratidin Logo.png').convert('RGBA') as logo:
               ratio=min(900/logo.width,900/logo.height)
@@ -107,23 +140,27 @@ jobs:
               mae=np.abs(actual[mask]-target[mask]).mean()
               if mae>32: raise SystemExit(f'Central master-logo visual mismatch: {mae:.1f}')
               print(f'CENTRAL MASTER LOGO: PASS (alpha-aware MAE {mae:.1f})')
+
           manifest=json.loads((out/'sync_manifest.json').read_text(encoding='utf-8'))
           if len(manifest.get('segments',[]))!=14: raise SystemExit('Expected 14 sync segments')
           if abs(float(manifest.get('total_video_seconds',0))-float(manifest.get('total_audio_seconds',0)))>0.20:
               raise SystemExit('Audio/video duration delta exceeds 0.20s')
+
           for p in out.rglob('*'):
               if p.is_file() and p.suffix.lower() in {'.md','.txt','.json'}:
                   t=p.read_text(encoding='utf-8',errors='ignore')
                   if 'विस्तृत फलादेश आवाज़ में सुनें' in t or 'विस्तृत फलादेश आपकी आवाज़ में' in t:
                       raise SystemExit(f'Forbidden legacy footer found in {p}')
+
           print('14 SCENES / 1080x1920: PASS')
-          print('14 MOTION CLIPS: PASS')
           print('NO LEGACY FOOTER: PASS')
           print('AUDIO-LED SYNC: PASS')
-          print('V21.4 OUTPUT QA: PASS')
+          print('V21.4.2 OUTPUT QA: PASS')
           PY
+
       - name: Package production artifact
         run: zip -qr daily-astro-output-v21-premium-9-5.zip output
+
       - name: Upload production artifact
         uses: actions/upload-artifact@v4
         with:
