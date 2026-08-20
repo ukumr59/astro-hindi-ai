@@ -11,7 +11,7 @@ permissions:
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
 
     steps:
       - name: Checkout project
@@ -32,30 +32,31 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-          from PIL import Image
+          from PIL import Image, ImageOps
           assets = Path('assets/deities')
           required = ['hanuman.jpg','lakshmi.jpg','ganesha.jpg','shiva.jpg','surya.jpg','vishnu.jpg','shani.jpg']
           for name in required:
               p = assets / name
-              if not p.exists():
-                  raise SystemExit(f'Missing deity asset: {p}')
+              if not p.exists(): raise SystemExit(f'Missing deity asset: {p}')
               with Image.open(p) as im:
+                  im = ImageOps.exif_transpose(im)
                   print(name, im.size, im.mode)
-                  if im.width < 1200 or im.height < 1200:
-                      raise SystemExit(f'Artwork is below 1200px: {p} -> {im.size}')
-          font = Path('assets/NotoSansDevanagari-Regular.ttf')
-          if not font.exists():
-              raise SystemExit('Missing bundled Devanagari font')
+                  if min(im.size) < 1200: raise SystemExit(f'Artwork below 1200px: {p} -> {im.size}')
+          if not Path('assets/NotoSansDevanagari-Regular.ttf').exists(): raise SystemExit('Missing Devanagari font')
+          if not Path('assets/intro_devotional.jpg').exists(): raise SystemExit('Missing intro artwork')
           PY
 
-      - name: Renderer syntax smoke test
-        run: python -m py_compile video_engine/render_sync.py
+      - name: Clean previous generated output
+        run: |
+          rm -rf output
+          mkdir -p output
+          echo "Renderer commit: $(git rev-parse HEAD)"
 
       - name: Generate daily Hindi astrology content
         run: python -m astro_engine.main
 
-      - name: Generate devotional video - AUDIO LED SYNC
-        run: python -m video_engine.render_sync
+      - name: Generate V5 premium audio-led devotional video
+        run: python -m video_engine.premium_entry
 
       - name: Validate generated outputs
         run: |
@@ -65,14 +66,28 @@ jobs:
           test -s output/daily_video.mp4
           test -s output/video_poster.png
           test -s output/sync_manifest.json
-          echo "===== GENERATED FILES ====="
-          find output -maxdepth 2 -type f -printf '%p %k KB\n' | sort
-          echo "==========================="
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          m=json.loads(Path('output/sync_manifest.json').read_text(encoding='utf-8'))
+          expected=['intro','मेष','वृषभ','मिथुन','कर्क','सिंह','कन्या','तुला','वृश्चिक','धनु','मकर','कुंभ','मीन','outro']
+          s=m.get('segments',[])
+          if [x.get('key') for x in s] != expected: raise SystemExit('Wrong 14-segment order')
+          cursor=0.0
+          for x in s:
+              sec=float(x['audio_seconds']); start=float(x['start_seconds']); end=float(x['end_seconds'])
+              if sec<=0 or abs(start-cursor)>0.05 or abs((end-start)-sec)>0.10: raise SystemExit(f"Timeline validation failed at {x['label']}")
+              if abs(float(x.get('scene_seconds',sec))-sec)>0.10: raise SystemExit(f"Scene/audio mismatch at {x['label']}")
+              cursor=end
+          if abs(float(m['total_audio_seconds'])-float(m['total_video_seconds']))>0.20: raise SystemExit('Final audio/video duration mismatch')
+          if m.get('renderer') != 'V4-AUDIO-LED-DEVOTIONAL': raise SystemExit(f"Unexpected base renderer: {m.get('renderer')}")
+          print(f'PREMIUM validation passed: 14 exact scene/audio boundaries, {cursor:.3f}s total')
+          PY
 
       - name: Upload daily production bundle
         uses: actions/upload-artifact@v4
         with:
-          name: daily-astro-output-production-v8
+          name: daily-astro-output-${{ github.run_number }}-premium
           path: |
             output/daily_script.md
             output/planetary_report.txt
@@ -81,5 +96,6 @@ jobs:
             output/video_poster.png
             output/sync_manifest.json
             output/deity_credits.txt
+            output/audio_segments/*.mp3
             output/video_scenes/*.jpg
           retention-days: 7
