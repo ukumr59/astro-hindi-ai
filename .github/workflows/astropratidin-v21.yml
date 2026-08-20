@@ -63,8 +63,14 @@ jobs:
               if x not in s: raise SystemExit(f'Missing V21 renderer requirement: {x}')
           for x in ['hardened_motion','-frames:v','-movflags','safe=True','premium_intro','premium_rashi']:
               if x not in h: raise SystemExit(f'Missing V21.2 hardening requirement: {x}')
-          for x in ['setsar=1','scale=1080:1920','concat=n=14']:
+          # V21.4 assembly contract: normalize every clip before concat and
+          # normalize the final concat stream. Do not require a brittle
+          # literal such as scale=1080:1920 because the renderer calculates
+          # the normalized dimensions from W/H constants.
+          for x in ['setsar=1','format=yuv420p','concat=n=','normalized =','concat_inputs =']:
               if x not in r: raise SystemExit(f'Missing V21.4 assembly normalization: {x}')
+          if 'scale_w = int(W * 1.08)' not in r or 'scale_h = int(H * 1.08)' not in r:
+              raise SystemExit('Missing V21.4 motion normalization dimensions')
           if not p.exists(): raise SystemExit('visual_profiles.py missing')
           print('V21.4 ARCHITECTURE CONTRACT: PASS')
           PY
