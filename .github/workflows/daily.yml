@@ -2,22 +2,19 @@ name: Daily Astro Hindi Video
 
 on:
   schedule:
+    # 08:00 IST daily (02:30 UTC)
     - cron: "30 2 * * *"
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-
   generate:
-
     runs-on: ubuntu-latest
-
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
-
       - name: Checkout project
         uses: actions/checkout@v4
 
@@ -25,32 +22,51 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
 
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Validate bundled devotional assets
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+          assets = Path('assets/deities')
+          required = ['hanuman.jpg','lakshmi.jpg','ganesha.jpg','shiva.jpg','surya.jpg','vishnu.jpg','shani.jpg']
+          for name in required:
+              p = assets / name
+              if not p.exists():
+                  raise SystemExit(f'Missing deity asset: {p}')
+              with Image.open(p) as im:
+                  print(name, im.size, im.mode)
+                  if im.width < 1200 or im.height < 1200:
+                      raise SystemExit(f'Artwork is below 1200px: {p} -> {im.size}')
+          font = Path('assets/NotoSansDevanagari-Regular.ttf')
+          if not font.exists():
+              raise SystemExit('Missing bundled Devanagari font')
+          PY
+
       - name: Generate daily Hindi astrology content
-        run: |
-          python -m astro_engine.main
+        run: python -m astro_engine.main
 
-      - name: Generate Hindi video
-        run: |
-          python -m video_engine.render
+      - name: Generate devotional video
+        run: python -m video_engine.render
 
-      - name: Check generated files
+      - name: Validate generated outputs
         run: |
+          test -s output/daily_script.md
+          test -s output/planetary_report.txt
+          test -s output/daily_voice.mp3
+          test -s output/daily_video.mp4
+          test -s output/video_poster.png
           echo "===== GENERATED FILES ====="
-          ls -lah output
+          find output -maxdepth 2 -type f -printf '%p %k KB\n' | sort
           echo "==========================="
 
-          test -f output/daily_script.md
-          test -f output/planetary_report.txt
-          test -f output/daily_voice.mp3
-          test -f output/daily_video.mp4
-
-      - name: Upload generated files
+      - name: Upload daily production bundle
         uses: actions/upload-artifact@v4
         with:
           name: daily-astro-output
@@ -60,4 +76,6 @@ jobs:
             output/daily_voice.mp3
             output/daily_video.mp4
             output/video_poster.png
+            output/deity_credits.txt
+            output/video_scenes/*.jpg
           retention-days: 7
