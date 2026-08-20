@@ -5,6 +5,10 @@ on:
   push:
     branches: [v21-premium-9-5-architecture]
 
+concurrency:
+  group: astropratidin-v21-final-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -60,48 +64,28 @@ jobs:
           from video_engine import premium_entry as premium
           from video_engine import premium_entry_v21_1 as hardened
           from video_engine import visual_profiles as profiles
-
-          required = [
-              (premium, 'MASTER_LOGO'),
-              (premium, '_load_master_logo'),
-              (premium, '_safe_display'),
-              (premium, '_draw_separator'),
-              (premium, 'premium_intro'),
-              (premium, 'premium_rashi'),
-              (premium, 'premium_outro'),
-              (hardened, 'hardened_motion'),
-              (hardened, 'motion_profile'),
-              (hardened, '_normalize_sar'),
-          ]
-          for module, attr in required:
-              if not hasattr(module, attr):
-                  raise SystemExit(f'Missing V21.9.5 capability: {module.__name__}.{attr}')
-
-          expected = Path('assets/AstroPratidin Logo.png').resolve()
-          if Path(premium.MASTER_LOGO).resolve() != expected:
-              raise SystemExit('Renderer is not wired to exact master logo')
-
+          required=[
+              (premium,'MASTER_LOGO'),(premium,'_load_master_logo'),(premium,'_safe_display'),
+              (premium,'_draw_separator'),(premium,'premium_intro'),(premium,'premium_rashi'),(premium,'premium_outro'),
+              (hardened,'hardened_motion'),(hardened,'motion_profile'),(hardened,'_normalize_sar')]
+          for module,attr in required:
+              if not hasattr(module,attr): raise SystemExit(f'Missing capability: {module.__name__}.{attr}')
+          expected=Path('assets/AstroPratidin Logo.png').resolve()
+          if Path(premium.MASTER_LOGO).resolve()!=expected: raise SystemExit('Renderer is not wired to exact master logo')
           rashi_keys={x[0] for x in premium.base.RASHIS}
-          if set(profiles.RASHI_PROFILES)!=rashi_keys:
-              raise SystemExit('Rashi visual-profile coverage mismatch')
-          if set(profiles.MOTION)!={'intro','push_in','drift_right','drift_left'}:
-              raise SystemExit('Motion profile coverage mismatch')
-
+          if set(profiles.RASHI_PROFILES)!=rashi_keys: raise SystemExit('Rashi visual-profile coverage mismatch')
+          if set(profiles.MOTION)!={'intro','push_in','drift_right','drift_left'}: raise SystemExit('Motion profile coverage mismatch')
           active_files=[Path('video_engine/premium_entry.py'),Path('video_engine/premium_entry_v21_1.py'),Path('video_engine/visual_profiles.py')]
           forbidden=['intro_devotional.jpg','विस्तृत फलादेश आवाज़ में सुनें','विस्तृत फलादेश आपकी आवाज़ में','DAILY ASTRO','•','□','�','…']
           for path in active_files:
               text=path.read_text(encoding='utf-8',errors='ignore')
               for item in forbidden:
-                  if item in text:
-                      raise SystemExit(f'Forbidden active-renderer content/glyph in {path}: {item}')
-
-          premium_src=inspect.getsource(premium.main)
-          hardened_src=inspect.getsource(hardened.main)
+                  if item in text: raise SystemExit(f'Forbidden active-renderer content/glyph in {path}: {item}')
+          premium_src=inspect.getsource(premium.main); hardened_src=inspect.getsource(hardened.main)
           for needle in ['base.intro = premium_intro','base.rashi_scene = premium_rashi','base.outro = premium_outro','base.motion = premium_motion']:
               if needle not in premium_src: raise SystemExit(f'V21 hook wiring missing: {needle}')
           for needle in ['base.intro = v21.premium_intro','base.rashi_scene = v21.premium_rashi','base.outro = v21.premium_outro','base.motion = hardened_motion']:
               if needle not in hardened_src: raise SystemExit(f'Hardened hook wiring missing: {needle}')
-
           print('V21.9.5 RENDERER ARCHITECTURE: PASS')
           print('EXACT MASTER LOGO WIRING: PASS')
           print('12 RASHI VISUAL PROFILES: PASS')
@@ -130,8 +114,7 @@ jobs:
           counts={r:sum(bool(re.match(rf'^{re.escape(r)} राशि(?:[।:]|\s)',x)) for x in lines) for r in rashis}
           bad=[r for r,n in counts.items() if n!=1]
           if bad: raise SystemExit(f'Rashi heading coverage invalid: {bad}')
-          forbidden=['...','…','□','�','विस्तृत फलादेश आवाज़ में सुनें','विस्तृत फलादेश आपकी आवाज़ में']
-          for token in forbidden:
+          for token in ['...','…','□','�','विस्तृत फलादेश आवाज़ में सुनें','विस्तृत फलादेश आपकी आवाज़ में']:
               if token in text: raise SystemExit(f'Forbidden/truncated content: {token}')
           starts=[]
           for i,line in enumerate(lines):
@@ -141,8 +124,7 @@ jobs:
           if [r for _,r in starts]!=rashis: raise SystemExit('Rashi narration is not in canonical order')
           for i,(pos,r) in enumerate(starts):
               end=starts[i+1][0] if i+1<len(starts) else len(lines)
-              block=' '.join(lines[pos:end])
-              words=block.split()
+              block=' '.join(lines[pos:end]); words=block.split()
               if len(words)<12: raise SystemExit(f'{r} narration too short: {len(words)} words')
               if len(words)>110: raise SystemExit(f'{r} narration too long: {len(words)} words')
               if not any(ch in block for ch in '।!?'): raise SystemExit(f'{r} narration has no sentence punctuation')
@@ -160,55 +142,42 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-          import json
-          import subprocess
+          import json, subprocess
           import numpy as np
           from PIL import Image
-
           out=Path('output')
-          scenes=sorted((out/'video_scenes').glob('*.jpg'))
-          motions=sorted((out/'video_scenes').glob('motion_*.mp4'))
+          scenes=sorted((out/'video_scenes').glob('*.jpg')); motions=sorted((out/'video_scenes').glob('motion_*.mp4'))
           if len(scenes)!=14: raise SystemExit(f'Expected 14 rendered scenes, got {len(scenes)}')
           if len(motions)!=14: raise SystemExit(f'Expected 14 motion clips, got {len(motions)}')
           for p in scenes:
               with Image.open(p) as im:
                   if im.size!=(1080,1920): raise SystemExit(f'Bad dimensions: {p.name} {im.size}')
-
           def probe(path):
               raw=subprocess.check_output(['ffprobe','-v','error','-select_streams','v:0','-show_entries','stream=width,height,sample_aspect_ratio,pix_fmt,nb_frames','-of','json',str(path)],text=True)
               streams=json.loads(raw).get('streams',[])
               if not streams: raise SystemExit(f'No video stream: {path}')
               return streams[0]
-
           for p in motions:
               st=probe(p)
               if (st.get('width'),st.get('height'))!=(1080,1920): raise SystemExit(f'Bad motion dimensions: {p.name}')
               if st.get('sample_aspect_ratio')!='1:1': raise SystemExit(f'Non-square motion SAR: {p.name}')
               if st.get('pix_fmt')!='yuv420p': raise SystemExit(f'Unexpected motion pixel format: {p.name}')
               if not st.get('nb_frames') or int(st['nb_frames'])<2: raise SystemExit(f'Motion clip has insufficient frames: {p.name}')
-
           final=out/'daily_video.mp4'
           if not final.exists(): raise SystemExit('Final video missing')
           st=probe(final)
           if (st.get('width'),st.get('height'))!=(1080,1920): raise SystemExit('Final video dimensions invalid')
           if st.get('sample_aspect_ratio')!='1:1': raise SystemExit('Final video SAR invalid')
           if st.get('pix_fmt')!='yuv420p': raise SystemExit('Final video pixel format invalid')
-
           intro=out/'video_scenes/000_intro.jpg'
           with Image.open(intro).convert('RGB') as im, Image.open('assets/AstroPratidin Logo.png').convert('RGBA') as logo:
-              ratio=min(900/logo.width,900/logo.height)
-              logo=logo.resize((max(1,int(logo.width*ratio)),max(1,int(logo.height*ratio))),Image.Resampling.LANCZOS)
+              ratio=min(900/logo.width,900/logo.height); logo=logo.resize((max(1,int(logo.width*ratio)),max(1,int(logo.height*ratio))),Image.Resampling.LANCZOS)
               x=(1080-logo.width)//2; y=610-logo.height//2
-              actual=np.asarray(im.crop((x,y,x+logo.width,y+logo.height)),dtype=np.int16)
-              target=np.asarray(logo.convert('RGB'),dtype=np.int16)
-              alpha=np.asarray(logo.getchannel('A'),dtype=np.uint8)
-              mask=alpha>=128
+              actual=np.asarray(im.crop((x,y,x+logo.width,y+logo.height)),dtype=np.int16); target=np.asarray(logo.convert('RGB'),dtype=np.int16)
+              alpha=np.asarray(logo.getchannel('A'),dtype=np.uint8); mask=alpha>=128
               if int(mask.sum())<10000: raise SystemExit('Master logo alpha mask unexpectedly small')
               mae=np.abs(actual[mask]-target[mask]).mean()
               if mae>32: raise SystemExit(f'Central master-logo visual mismatch: {mae:.1f}')
-
-          # Source/output glyph contract: the old tofu-box class is forbidden
-          # in both the active renderer and every generated textual artifact.
           for source in [Path('video_engine/premium_entry.py'),Path('video_engine/premium_entry_v21_1.py')]:
               t=source.read_text(encoding='utf-8',errors='ignore')
               for token in ['•','□','�','…']:
@@ -218,12 +187,10 @@ jobs:
                   t=p.read_text(encoding='utf-8',errors='ignore')
                   for token in ['•','□','�','…','विस्तृत फलादेश आवाज़ में सुनें','विस्तृत फलादेश आपकी आवाज़ में']:
                       if token in t: raise SystemExit(f'Forbidden output text in {p}: {token}')
-
           manifest=json.loads((out/'sync_manifest.json').read_text(encoding='utf-8'))
           if len(manifest.get('segments',[]))!=14: raise SystemExit('Expected 14 sync segments')
           delta=abs(float(manifest.get('total_video_seconds',0))-float(manifest.get('total_audio_seconds',0)))
           if delta>0.20: raise SystemExit(f'Audio/video duration delta exceeds 0.20s: {delta:.3f}s')
-
           print('14 SCENES / 1080x1920: PASS')
           print('14 MOTION CLIPS / SAR 1:1 / yuv420p: PASS')
           print('EXACT CENTRAL MASTER LOGO: PASS')
