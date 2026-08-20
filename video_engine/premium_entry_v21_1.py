@@ -1,4 +1,4 @@
-"""V21.4.2 production entrypoint with resilient premium motion rendering."""
+"""V21.9.5 production entrypoint with resilient premium motion rendering."""
 from pathlib import Path
 from . import premium_entry as v21
 from . import render_sync as base
