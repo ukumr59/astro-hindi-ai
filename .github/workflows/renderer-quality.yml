@@ -1,18 +1,17 @@
-name: Renderer Quality Gate
+name: AstroPratidin V20 Production
 
 on:
   push:
-    branches: [main, premium-9-3-brand-consistency]
-  pull_request:
-    branches: [main]
+    branches: [premium-9-3-brand-consistency]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  quality:
+  production:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -22,27 +21,48 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
+      - name: Install FFmpeg
+        uses: FedericoCarboni/setup-ffmpeg@v3
+
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Compile renderer
-        run: python -m py_compile video_engine/render_sync.py video_engine/premium_entry.py
-
-      - name: Run brand consistency guard
-        run: python tests/test_branding.py
-
-      - name: Validate master logo asset
+      - name: Verify approved AstroPratidin master logo
         run: |
           python - <<'PY'
           from pathlib import Path
+          import hashlib
           from PIL import Image
-          p = Path('assets/brand/astropratidin_logo.webp')
-          if not p.exists():
-              raise SystemExit(f'Missing {p}')
+          p = Path('assets/brand/astropratidin_logo_256.png')
+          expected = '419b276c31a386070d2f806e57691e632a123098a920db98b62206d268106b80'
+          if not p.exists(): raise SystemExit('Approved master logo missing')
+          actual = hashlib.sha256(p.read_bytes()).hexdigest()
+          if actual != expected: raise SystemExit(f'Wrong logo asset SHA: {actual}')
           with Image.open(p) as im:
-              print('AstroPratidin master logo:', im.size, im.mode)
-              if min(im.size) < 160:
-                  raise SystemExit('Master logo is below 160px and is not production-safe')
+              if im.size != (256, 256): raise SystemExit(f'Unexpected logo size: {im.size}')
+          print('APPROVED ASTROPRATIDIN MASTER LOGO: PASS')
           PY
+
+      - name: Compile production renderer
+        run: python -m py_compile video_engine/render_sync.py video_engine/premium_entry.py video_engine/production_v20.py tests/test_v20_output.py
+
+      - name: Render V20 production video
+        run: python -m video_engine.production_v20
+
+      - name: Run output-level QA
+        run: python tests/test_v20_output.py
+
+      - name: Create production bundle
+        run: |
+          rm -rf output/.gitkeep
+          zip -qr daily-astro-output-v20-premium.zip output
+
+      - name: Upload final production bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-astro-output-v20-premium
+          path: daily-astro-output-v20-premium.zip
+          if-no-files-found: error
+          retention-days: 14

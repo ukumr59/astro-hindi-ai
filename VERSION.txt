@@ -1,2 +1,3 @@
-ASTRO HINDI DEVOTIONAL VIDEO V19
-Premium renderer: protected master-logo brand zone, clean hierarchy, no decorative glyphs, high-contrast panels
+ASTRO HINDI DEVOTIONAL VIDEO V20
+Production-grade AstroPratidin renderer
+Exact user-supplied master logo + output-level visual QA + GitHub Actions production artifact
