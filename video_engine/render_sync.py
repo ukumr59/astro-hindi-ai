@@ -283,7 +283,7 @@ def make_motion_clip(ffmpeg, scene, duration_seconds, index):
     subprocess.run(
         [
             ffmpeg, "-y", "-loop", "1", "-i", str(scene),
-            "-vf", vf, "-frames:v", str(frames), "-an",
+            "-vf", vf, "-t", f"{duration_seconds:.3f}", "-an",
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
             "-pix_fmt", "yuv420p", str(output),
         ],
@@ -409,7 +409,9 @@ def main():
         print(f"  {label}: {seconds:.3f}s")
 
     concat_audio(ffmpeg, audio_files)
-    audio_duration_total = sum(audio_durations)
+    # The concatenated public MP3 is the final audio master. Measure it after
+    # concatenation so encoder padding cannot create a hidden duration drift.
+    audio_duration_total = duration(ffmpeg, VOICE)
 
     deity_paths = base.prepare_deities()
     scenes = [create_intro_fixed(script)]
