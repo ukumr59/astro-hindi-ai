@@ -25,8 +25,11 @@ jobs:
           python-version: '3.12'
           cache: pip
 
-      - name: Install FFmpeg
-        uses: FedericoCarboni/setup-ffmpeg@v3
+      - name: Install FFmpeg from Ubuntu packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          ffmpeg -version | head -n 1
 
       - name: Install Python dependencies
         run: |
@@ -85,9 +88,6 @@ jobs:
               with Image.open(p) as im:
                   if im.size!=(1080,1920): raise SystemExit(f'Bad dimensions: {p.name} {im.size}')
 
-          # V20.3: validate the exact master logo at the new 900px central size.
-          # Only pixels covered by the supplied logo's alpha mask are compared;
-          # the supporting concentric-ring background is intentionally allowed.
           intro=out/'video_scenes/000_intro.jpg'
           with Image.open(intro).convert('RGB') as im, Image.open('assets/AstroPratidin Logo.png').convert('RGBA') as logo:
               ratio=min(900/logo.width,900/logo.height)
@@ -100,9 +100,8 @@ jobs:
               if int(mask.sum()) < 10000: raise SystemExit('Master logo alpha mask unexpectedly small')
               mae=np.abs(actual[mask]-target[mask]).mean()
               if mae>32: raise SystemExit(f'Central master-logo visual mismatch: alpha-aware MAE {mae:.1f}')
-              print(f'CENTRAL MASTER LOGO V20.3: PASS (alpha-aware MAE {mae:.1f})')
+              print(f'CENTRAL MASTER LOGO: PASS (alpha-aware MAE {mae:.1f})')
 
-          # No legacy footer may survive in generated text/metadata.
           for p in out.rglob('*'):
               if p.is_file() and p.suffix.lower() in {'.md','.txt','.json'}:
                   text=p.read_text(encoding='utf-8',errors='ignore')
