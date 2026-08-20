@@ -28,10 +28,44 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Syntax smoke test
+      - name: Install FFmpeg
+        uses: FedericoCarboni/setup-ffmpeg@v3
+
+      - name: Validate exact AstroPratidin master logo
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import subprocess
+          from PIL import Image
+          p = Path('assets/AstroPratidin Logo.png')
+          expected_git_blob = '9202b7441135ba96bbefd97b782cad65e03f3926'
+          if not p.exists(): raise SystemExit(f'Missing exact master logo: {p}')
+          actual = subprocess.check_output(['git','hash-object',str(p)], text=True).strip()
+          if actual != expected_git_blob: raise SystemExit(f'Wrong logo asset: {actual}')
+          with Image.open(p) as im:
+              print('Master logo:', im.size, im.mode)
+              if min(im.size) < 200: raise SystemExit('Master logo resolution too small')
+          print('EXACT ASTROPRATIDIN MASTER LOGO: PASS')
+          PY
+
+      - name: Validate renderer source contract
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          s = Path('video_engine/premium_entry.py').read_text(encoding='utf-8')
+          required = ['assets', 'AstroPratidin Logo.png', '_header(canvas)', 'base.intro = premium_intro']
+          forbidden = ['_brand_logo(', 'विस्तृत फलादेश आवाज़ में सुनें', 'विस्तृत फलादेश आपकी आवाज़ में', 'assets/intro_devotional.jpg', 'd.text(((base.W-(b[2]-b[0]))/2,1745), BRAND']
+          for x in required:
+              if x not in s: raise SystemExit(f'Missing renderer requirement: {x}')
+          for x in forbidden:
+              if x in s: raise SystemExit(f'Forbidden legacy renderer content: {x}')
+          print('RENDERER CONTRACT: PASS')
+          PY
+
+      - name: Compile renderer
         run: python -m py_compile video_engine/render_sync.py video_engine/premium_entry.py
 
-      - name: Validate bundled devotional assets
+      - name: Validate bundled deity assets
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -43,10 +77,8 @@ jobs:
               if not p.exists(): raise SystemExit(f'Missing deity asset: {p}')
               with Image.open(p) as im:
                   im = ImageOps.exif_transpose(im)
-                  print(name, im.size, im.mode)
                   if min(im.size) < 1200: raise SystemExit(f'Artwork below 1200px: {p} -> {im.size}')
-          for p in ['assets/NotoSansDevanagari-Regular.ttf','assets/intro_devotional.jpg']:
-              if not Path(p).exists(): raise SystemExit(f'Missing required asset: {p}')
+          print('DEITY ASSETS: PASS')
           PY
 
       - name: Clean previous generated output
@@ -58,7 +90,7 @@ jobs:
       - name: Generate daily Hindi astrology content
         run: python -m astro_engine.main
 
-      - name: Generate V5 premium audio-led devotional video
+      - name: Generate AstroPratidin premium audio-led video
         run: python -m video_engine.premium_entry
 
       - name: Validate generated outputs
@@ -79,11 +111,17 @@ jobs:
           cursor=0.0
           for x in s:
               sec=float(x['audio_seconds']); start=float(x['start_seconds']); end=float(x['end_seconds'])
-              if sec<=0 or abs(start-cursor)>0.05 or abs((end-start)-sec)>0.10: raise SystemExit(f"Timeline validation failed at {x['label']}")
-              if abs(float(x.get('scene_seconds',sec))-sec)>0.10: raise SystemExit(f"Scene/audio mismatch at {x['label']}")
+              if sec<=0 or abs(start-cursor)>0.05 or abs((end-start)-sec)>0.10: raise SystemExit(f'Timeline validation failed at {x["label"]}')
+              if abs(float(x.get('scene_seconds',sec))-sec)>0.10: raise SystemExit(f'Scene/audio mismatch at {x["label"]}')
               cursor=end
           if abs(float(m['total_audio_seconds'])-float(m['total_video_seconds']))>0.20: raise SystemExit('Final audio/video duration mismatch')
-          print(f'PREMIUM validation passed: 14 exact scene/audio boundaries, {cursor:.3f}s total')
+          # Ensure the old footer cannot reappear in generated source/metadata.
+          for p in Path('output').rglob('*'):
+              if p.is_file() and p.suffix.lower() in {'.md','.txt','.json'}:
+                  text=p.read_text(encoding='utf-8', errors='ignore')
+                  if 'विस्तृत फलादेश आवाज़ में सुनें' in text or 'विस्तृत फलादेश आपकी आवाज़ में' in text:
+                      raise SystemExit(f'Forbidden legacy footer found in {p}')
+          print(f'PRODUCTION validation passed: 14 exact scene/audio boundaries, {cursor:.3f}s total')
           PY
 
       - name: Upload daily production bundle
