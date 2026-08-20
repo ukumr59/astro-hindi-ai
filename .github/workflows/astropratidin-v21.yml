@@ -52,7 +52,7 @@ jobs:
           print('EXACT MASTER LOGO: PASS')
           PY
 
-      - name: Verify V21.1 architecture contract
+      - name: Verify V21.2 architecture contract
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -65,10 +65,10 @@ jobs:
           required=['AstroPratidin Logo.png','_load_master_logo(900, 900)','RASHI_PROFILES','MOTION']
           for x in required:
               if x not in s: raise SystemExit(f'Missing V21 renderer requirement: {x}')
-          for x in ['hardened_motion','clip(t/','-threads','premium_intro','premium_rashi']:
-              if x not in h: raise SystemExit(f'Missing V21.1 hardening requirement: {x}')
+          for x in ['hardened_motion','-frames:v','-movflags','safe=True','premium_intro','premium_rashi']:
+              if x not in h: raise SystemExit(f'Missing V21.2 hardening requirement: {x}')
           if not p.exists(): raise SystemExit('visual_profiles.py missing')
-          print('V21.1 ARCHITECTURE CONTRACT: PASS')
+          print('V21.2 ARCHITECTURE CONTRACT: PASS')
           PY
 
       - name: Compile
@@ -77,7 +77,7 @@ jobs:
       - name: Generate daily content
         run: python -m astro_engine.main
 
-      - name: Render AstroPratidin V21.1 premium production
+      - name: Render AstroPratidin V21.2 premium production
         run: python -m video_engine.premium_entry_v21_1
 
       - name: Output QA
@@ -122,7 +122,7 @@ jobs:
           print('14 MOTION CLIPS: PASS')
           print('NO LEGACY FOOTER: PASS')
           print('AUDIO-LED SYNC: PASS')
-          print('V21.1 OUTPUT QA: PASS')
+          print('V21.2 OUTPUT QA: PASS')
           PY
 
       - name: Package production artifact
