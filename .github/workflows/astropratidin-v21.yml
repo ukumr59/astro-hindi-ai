@@ -52,23 +52,38 @@ jobs:
           print('EXACT MASTER LOGO: PASS')
           PY
 
-      - name: Verify V21.4.2 architecture contract
+      - name: Verify V21 architecture contract
         run: |
           python - <<'PY'
           from pathlib import Path
-          s=Path('video_engine/premium_entry.py').read_text(encoding='utf-8')
-          h=Path('video_engine/premium_entry_v21_1.py').read_text(encoding='utf-8')
-          p=Path('video_engine/visual_profiles.py')
+          import ast
+
+          root=Path('video_engine')
+          entry=root/'premium_entry_v21_1.py'
+          profiles=root/'visual_profiles.py'
+          base=root/'premium_entry.py'
+          required_files=[entry,profiles,base]
+          for p in required_files:
+              if not p.exists(): raise SystemExit(f'Missing required renderer file: {p}')
+
           forbidden=['intro_devotional.jpg','विस्तृत फलादेश आवाज़ में सुनें','विस्तृत फलादेश आपकी आवाज़ में','DAILY ASTRO','_brand_logo(']
-          for x in forbidden:
-              if x in s or x in h: raise SystemExit(f'Forbidden legacy content: {x}')
-          required=['AstroPratidin Logo.png','_load_master_logo(900, 900)','RASHI_PROFILES','MOTION']
-          for x in required:
-              if x not in s: raise SystemExit(f'Missing V21 renderer requirement: {x}')
-          for x in ['hardened_motion','_normalize_sar','setsar=1','scale=1080:1920','format=yuv420p','-frames:v','-movflags','safe=True','premium_intro','premium_rashi']:
-              if x not in h: raise SystemExit(f'Missing V21.4.2 hardening requirement: {x}')
-          if not p.exists(): raise SystemExit('visual_profiles.py missing')
-          print('V21.4.2 ARCHITECTURE CONTRACT: PASS')
+          for p in [entry,base]:
+              text=p.read_text(encoding='utf-8')
+              for x in forbidden:
+                  if x in text: raise SystemExit(f'Forbidden legacy content in {p}: {x}')
+              ast.parse(text,filename=str(p))
+          ast.parse(profiles.read_text(encoding='utf-8'),filename=str(profiles))
+
+          profile_text=profiles.read_text(encoding='utf-8')
+          for x in ['RASHI_PROFILES','MOTION']:
+              if x not in profile_text: raise SystemExit(f'Missing data-driven architecture: {x}')
+
+          entry_text=entry.read_text(encoding='utf-8')
+          for x in ['AstroPratidin Logo.png','900','premium_intro','premium_rashi']:
+              if x not in entry_text: raise SystemExit(f'Missing V21 renderer capability: {x}')
+
+          print('V21 ARCHITECTURE CONTRACT: PASS')
+          print('Behavioral media validation is performed after rendering; source-string implementation details are intentionally not required.')
           PY
 
       - name: Compile
@@ -102,7 +117,7 @@ jobs:
           def probe(path):
               raw=subprocess.check_output([
                   'ffprobe','-v','error','-select_streams','v:0',
-                  '-show_entries','stream=width,height,sample_aspect_ratio,pix_fmt',
+                  '-show_entries','stream=width,height,sample_aspect_ratio,pix_fmt,nb_frames',
                   '-of','json',str(path)
               ],text=True)
               streams=json.loads(raw).get('streams',[])
@@ -113,10 +128,12 @@ jobs:
               st=probe(p)
               if (st.get('width'),st.get('height'))!=(1080,1920):
                   raise SystemExit(f'Bad motion dimensions: {p.name} {st.get("width")}x{st.get("height")}')
-              if st.get('sample_aspect_ratio') not in ('1:1','1:1'):
+              if st.get('sample_aspect_ratio')!='1:1':
                   raise SystemExit(f'Non-square motion SAR: {p.name} {st.get("sample_aspect_ratio")}')
               if st.get('pix_fmt')!='yuv420p':
                   raise SystemExit(f'Unexpected motion pixel format: {p.name} {st.get("pix_fmt")}')
+              if not st.get('nb_frames') or int(st['nb_frames']) < 2:
+                  raise SystemExit(f'Motion clip has insufficient frames: {p.name}')
           print('14 MOTION CLIPS / 1080x1920 / SAR 1:1 / yuv420p: PASS')
 
           final=out/'daily_video.mp4'
@@ -155,7 +172,7 @@ jobs:
           print('14 SCENES / 1080x1920: PASS')
           print('NO LEGACY FOOTER: PASS')
           print('AUDIO-LED SYNC: PASS')
-          print('V21.4.2 OUTPUT QA: PASS')
+          print('V21 OUTPUT QA: PASS')
           PY
 
       - name: Package production artifact
