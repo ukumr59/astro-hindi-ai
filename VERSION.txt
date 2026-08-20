@@ -1,2 +1,2 @@
-ASTRO HINDI DEVOTIONAL VIDEO V16
-Renderer + bundled HD devotional artwork
+ASTRO HINDI DEVOTIONAL VIDEO V20
+Exact AstroPratidin master-logo renderer + automated production QA
