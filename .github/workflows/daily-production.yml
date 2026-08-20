@@ -1,6 +1,8 @@
 name: Daily Astro Hindi Video - Production
 
 on:
+  push:
+    branches: [main, premium-9-3-brand-consistency]
   schedule:
     - cron: "30 2 * * *"
   workflow_dispatch:
@@ -89,9 +91,6 @@ jobs:
               if abs(float(x.get('scene_seconds',sec))-sec)>0.10: raise SystemExit(f"Scene/audio mismatch at {x['label']}")
               cursor=end
           if abs(float(m['total_audio_seconds'])-float(m['total_video_seconds']))>0.20: raise SystemExit('Final audio/video duration mismatch')
-
-          # Every scene must be 1080x1920 and the protected brand header must be
-          # pixel-consistent. This catches accidental per-scene logo drift.
           scene_paths = sorted(Path('output/video_scenes').glob('*.jpg'))
           if len(scene_paths) != 14: raise SystemExit(f'Expected 14 scenes, found {len(scene_paths)}')
           imgs=[]
