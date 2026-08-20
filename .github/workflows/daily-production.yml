@@ -51,22 +51,8 @@ jobs:
       - name: Generate daily Hindi astrology content
         run: python -m astro_engine.main
 
-      - name: Generate devotional video
-        run: python -m video_engine.render
-
-      - name: Create video poster
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          from PIL import Image
-          src = Path('output/video_scenes/000_intro.jpg')
-          dst = Path('output/video_poster.png')
-          if not src.exists():
-              raise SystemExit(f'Missing generated intro scene: {src}')
-          with Image.open(src) as im:
-              im.convert('RGB').save(dst, 'PNG')
-          print(f'Created {dst} from {src}')
-          PY
+      - name: Generate devotional video - AUDIO LED SYNC
+        run: python -m video_engine.render_sync
 
       - name: Validate generated outputs
         run: |
@@ -75,6 +61,7 @@ jobs:
           test -s output/daily_voice.mp3
           test -s output/daily_video.mp4
           test -s output/video_poster.png
+          test -s output/sync_manifest.json
           echo "===== GENERATED FILES ====="
           find output -maxdepth 2 -type f -printf '%p %k KB\n' | sort
           echo "==========================="
@@ -82,13 +69,14 @@ jobs:
       - name: Upload daily production bundle
         uses: actions/upload-artifact@v4
         with:
-          name: daily-astro-output-production
+          name: daily-astro-output-production-v4
           path: |
             output/daily_script.md
             output/planetary_report.txt
             output/daily_voice.mp3
             output/daily_video.mp4
             output/video_poster.png
+            output/sync_manifest.json
             output/deity_credits.txt
             output/video_scenes/*.jpg
           retention-days: 7
