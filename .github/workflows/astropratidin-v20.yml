@@ -2,13 +2,8 @@ name: AstroPratidin V20 Production
 
 on:
   workflow_dispatch:
-    inputs:
-      ref:
-        description: 'Production branch to render'
-        required: true
-        type: choice
-        options:
-          - v20-production-9-5
+  push:
+    branches: [main]
 
 permissions:
   contents: read
@@ -16,18 +11,19 @@ permissions:
 jobs:
   production:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
-      - name: Checkout V20 production branch
+      - name: Checkout corrected production main
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: main
           fetch-depth: 1
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: pip
 
       - name: Install FFmpeg
         uses: FedericoCarboni/setup-ffmpeg@v3
@@ -37,37 +33,66 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Verify approved AstroPratidin master logo
+      - name: Verify exact AstroPratidin master logo
         run: |
           python - <<'PY'
           from pathlib import Path
-          import hashlib
+          import subprocess
           from PIL import Image
-          p = Path('assets/brand/astropratidin_logo_256.png')
-          expected = '419b276c31a386070d2f806e57691e632a123098a920db98b62206d268106b80'
-          if not p.exists():
-              raise SystemExit('Approved AstroPratidin master logo missing')
-          actual = hashlib.sha256(p.read_bytes()).hexdigest()
-          if actual != expected:
-              raise SystemExit(f'Wrong logo asset SHA: {actual}')
+          p = Path('assets/AstroPratidin Logo.png')
+          expected = '9202b7441135ba96bbefd97b782cad65e03f3926'
+          if not p.exists(): raise SystemExit('Exact master logo missing')
+          actual = subprocess.check_output(['git','hash-object',str(p)], text=True).strip()
+          if actual != expected: raise SystemExit(f'Wrong logo asset: {actual}')
           with Image.open(p) as im:
-              print('Logo:', im.size, im.mode)
-          print('APPROVED ASTROPRATIDIN MASTER LOGO: PASS')
+              if min(im.size) < 200: raise SystemExit(f'Logo resolution too small: {im.size}')
+          print('EXACT MASTER LOGO: PASS')
           PY
 
-      - name: Compile production renderer
-        run: python -m py_compile video_engine/render_sync.py video_engine/premium_entry.py video_engine/production_v20.py tests/test_v20_output.py
+      - name: Verify renderer contract
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('video_engine/premium_entry.py').read_text(encoding='utf-8')
+          forbidden=['_brand_logo(', 'विस्तृत फलादेश आवाज़ में सुनें','विस्तृत फलादेश आपकी आवाज़ में','assets/intro_devotional.jpg','DAILY ASTRO']
+          for x in forbidden:
+              if x in s: raise SystemExit(f'Forbidden legacy content: {x}')
+          if 'AstroPratidin Logo.png' not in s: raise SystemExit('Exact logo path not wired')
+          print('RENDERER CONTRACT: PASS')
+          PY
 
-      - name: Render V20 production video
-        run: python -m video_engine.production_v20
+      - name: Compile
+        run: python -m py_compile video_engine/render_sync.py video_engine/premium_entry.py
 
-      - name: Run output-level QA
-        run: python tests/test_v20_output.py
+      - name: Generate daily content
+        run: python -m astro_engine.main
 
-      - name: Create final production bundle
+      - name: Render AstroPratidin V20 production
+        run: python -m video_engine.premium_entry
+
+      - name: Output QA
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          from PIL import Image
+          out=Path('output')
+          scenes=sorted((out/'video_scenes').glob('*.jpg'))
+          if len(scenes)!=14: raise SystemExit(f'Expected 14 rendered scenes, got {len(scenes)}')
+          for p in scenes:
+              with Image.open(p) as im:
+                  if im.size!=(1080,1920): raise SystemExit(f'Bad dimensions: {p.name} {im.size}')
+          m=json.loads((out/'sync_manifest.json').read_text(encoding='utf-8'))
+          if len(m.get('segments',[]))!=14: raise SystemExit('Expected 14 sync segments')
+          print('14 SCENES / 1080x1920: PASS')
+          print('14-SEGMENT SYNC: PASS')
+          print('OUTPUT QA: PASS')
+          PY
+
+      - name: Package production artifact
         run: zip -qr daily-astro-output-v20-premium.zip output
 
-      - name: Upload final production artifact
+      - name: Upload production artifact
         uses: actions/upload-artifact@v4
         with:
           name: daily-astro-output-v20-premium
