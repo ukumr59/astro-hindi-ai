@@ -4,6 +4,8 @@ on:
   schedule:
     - cron: "30 2 * * *"
   workflow_dispatch:
+  push:
+    branches: [main]
 
 permissions:
   contents: read
@@ -53,8 +55,8 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           s = Path('video_engine/premium_entry.py').read_text(encoding='utf-8')
-          required = ['assets', 'AstroPratidin Logo.png', '_header(canvas)', 'base.intro = premium_intro']
-          forbidden = ['_brand_logo(', 'विस्तृत फलादेश आवाज़ में सुनें', 'विस्तृत फलादेश आपकी आवाज़ में', 'assets/intro_devotional.jpg', 'd.text(((base.W-(b[2]-b[0]))/2,1745), BRAND']
+          required = ['assets', 'AstroPratidin Logo.png', '_header(canvas)', 'base.intro = premium_intro', '_load_master_logo(440, 440)']
+          forbidden = ['_brand_logo(', 'विस्तृत फलादेश आवाज़ में सुनें', 'विस्तृत फलादेश आपकी आवाज़ में', 'assets/intro_devotional.jpg', 'intro_devotional.jpg', 'DAILY ASTRO']
           for x in required:
               if x not in s: raise SystemExit(f'Missing renderer requirement: {x}')
           for x in forbidden:
@@ -104,6 +106,7 @@ jobs:
           python - <<'PY'
           import json
           from pathlib import Path
+          from PIL import Image, ImageChops
           m=json.loads(Path('output/sync_manifest.json').read_text(encoding='utf-8'))
           expected=['intro','मेष','वृषभ','मिथुन','कर्क','सिंह','कन्या','तुला','वृश्चिक','धनु','मकर','कुंभ','मीन','outro']
           s=m.get('segments',[])
@@ -115,13 +118,28 @@ jobs:
               if abs(float(x.get('scene_seconds',sec))-sec)>0.10: raise SystemExit(f'Scene/audio mismatch at {x["label"]}')
               cursor=end
           if abs(float(m['total_audio_seconds'])-float(m['total_video_seconds']))>0.20: raise SystemExit('Final audio/video duration mismatch')
-          # Ensure the old footer cannot reappear in generated source/metadata.
+
+          # Inspect the actual rendered intro: the supplied master logo must be
+          # visibly present at the center of the concentric-ring focal point.
+          intro=Path('output/video_scenes/000_intro.jpg')
+          with Image.open(intro).convert('RGB') as im, Image.open('assets/AstroPratidin Logo.png').convert('RGBA') as logo:
+              ratio=min(440/logo.width,440/logo.height)
+              logo=logo.resize((max(1,int(logo.width*ratio)),max(1,int(logo.height*ratio))),Image.Resampling.LANCZOS)
+              x=(1080-logo.width)//2; y=610-logo.height//2
+              expected=Image.new('RGBA',logo.size,(25,7,34,255)); expected.alpha_composite(logo)
+              actual=im.crop((x,y,x+logo.width,y+logo.height))
+              diff=ImageChops.difference(actual,expected.convert('RGB'))
+              extrema=diff.getextrema(); mean=sum((lo+hi)/2 for lo,hi in extrema)/3
+              if mean>22: raise SystemExit(f'Central master-logo visual mismatch: mean diff {mean:.1f}')
+
           for p in Path('output').rglob('*'):
               if p.is_file() and p.suffix.lower() in {'.md','.txt','.json'}:
                   text=p.read_text(encoding='utf-8', errors='ignore')
                   if 'विस्तृत फलादेश आवाज़ में सुनें' in text or 'विस्तृत फलादेश आपकी आवाज़ में' in text:
                       raise SystemExit(f'Forbidden legacy footer found in {p}')
           print(f'PRODUCTION validation passed: 14 exact scene/audio boundaries, {cursor:.3f}s total')
+          print('CENTRAL MASTER LOGO: PASS')
+          print('NO LEGACY FOOTER: PASS')
           PY
 
       - name: Upload daily production bundle
