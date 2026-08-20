@@ -52,30 +52,33 @@ jobs:
           print('EXACT MASTER LOGO: PASS')
           PY
 
-      - name: Verify V21 architecture contract
+      - name: Verify V21.1 architecture contract
         run: |
           python - <<'PY'
           from pathlib import Path
           s=Path('video_engine/premium_entry.py').read_text(encoding='utf-8')
+          h=Path('video_engine/premium_entry_v21_1.py').read_text(encoding='utf-8')
           p=Path('video_engine/visual_profiles.py')
           forbidden=['intro_devotional.jpg','विस्तृत फलादेश आवाज़ में सुनें','विस्तृत फलादेश आपकी आवाज़ में','DAILY ASTRO','_brand_logo(']
           for x in forbidden:
-              if x in s: raise SystemExit(f'Forbidden legacy content: {x}')
-          required=['AstroPratidin Logo.png','_load_master_logo(900, 900)','RASHI_PROFILES','MOTION','premium_motion']
+              if x in s or x in h: raise SystemExit(f'Forbidden legacy content: {x}')
+          required=['AstroPratidin Logo.png','_load_master_logo(900, 900)','RASHI_PROFILES','MOTION']
           for x in required:
               if x not in s: raise SystemExit(f'Missing V21 renderer requirement: {x}')
+          for x in ['hardened_motion','clip(t/','-threads','premium_intro','premium_rashi']:
+              if x not in h: raise SystemExit(f'Missing V21.1 hardening requirement: {x}')
           if not p.exists(): raise SystemExit('visual_profiles.py missing')
-          print('V21 ARCHITECTURE CONTRACT: PASS')
+          print('V21.1 ARCHITECTURE CONTRACT: PASS')
           PY
 
       - name: Compile
-        run: python -m py_compile video_engine/render_sync.py video_engine/visual_profiles.py video_engine/premium_entry.py
+        run: python -m py_compile video_engine/render_sync.py video_engine/visual_profiles.py video_engine/premium_entry.py video_engine/premium_entry_v21_1.py
 
       - name: Generate daily content
         run: python -m astro_engine.main
 
-      - name: Render AstroPratidin V21 premium production
-        run: python -m video_engine.premium_entry
+      - name: Render AstroPratidin V21.1 premium production
+        run: python -m video_engine.premium_entry_v21_1
 
       - name: Output QA
         run: |
@@ -119,7 +122,7 @@ jobs:
           print('14 MOTION CLIPS: PASS')
           print('NO LEGACY FOOTER: PASS')
           print('AUDIO-LED SYNC: PASS')
-          print('V21 OUTPUT QA: PASS')
+          print('V21.1 OUTPUT QA: PASS')
           PY
 
       - name: Package production artifact
