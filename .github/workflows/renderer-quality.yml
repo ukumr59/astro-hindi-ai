@@ -2,7 +2,7 @@ name: AstroPratidin V20 Production
 
 on:
   push:
-    branches: [premium-9-3-brand-consistency]
+    branches: [premium-9-3-brand-consistency, v20-production-9-5]
   workflow_dispatch:
 
 permissions:
@@ -56,7 +56,6 @@ jobs:
 
       - name: Create production bundle
         run: |
-          rm -rf output/.gitkeep
           zip -qr daily-astro-output-v20-premium.zip output
 
       - name: Upload final production bundle
