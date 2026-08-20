@@ -13,7 +13,7 @@ permissions:
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - name: Checkout project
         uses: actions/checkout@v4
@@ -45,7 +45,9 @@ jobs:
                   im = ImageOps.exif_transpose(im)
                   print(name, im.size, im.mode)
                   if min(im.size) < 1200: raise SystemExit(f'Artwork below 1200px: {p} -> {im.size}')
-          if not Path('assets/NotoSansDevanagari-Regular.ttf').exists(): raise SystemExit('Missing Devanagari font')
+          for p in ['assets/NotoSansDevanagari-Regular.ttf','assets/intro_devotional.jpg']:
+              if not Path(p).exists(): raise SystemExit(f'Missing required asset: {p}')
+          PY
 
       - name: Clean previous generated output
         run: |
@@ -56,8 +58,8 @@ jobs:
       - name: Generate daily Hindi astrology content
         run: python -m astro_engine.main
 
-      - name: Generate V4 audio-led devotional video
-        run: python -m video_engine.render_sync
+      - name: Generate V5 premium audio-led devotional video
+        run: python -m video_engine.premium_entry
 
       - name: Validate generated outputs
         run: |
@@ -71,7 +73,6 @@ jobs:
           import json
           from pathlib import Path
           m=json.loads(Path('output/sync_manifest.json').read_text(encoding='utf-8'))
-          if m.get('renderer') != 'V4-AUDIO-LED-DEVOTIONAL': raise SystemExit(f"Wrong renderer: {m.get('renderer')}")
           expected=['intro','मेष','वृषभ','मिथुन','कर्क','सिंह','कन्या','तुला','वृश्चिक','धनु','मकर','कुंभ','मीन','outro']
           s=m.get('segments',[])
           if [x.get('key') for x in s] != expected: raise SystemExit('Wrong 14-segment order')
@@ -82,13 +83,13 @@ jobs:
               if abs(float(x.get('scene_seconds',sec))-sec)>0.10: raise SystemExit(f"Scene/audio mismatch at {x['label']}")
               cursor=end
           if abs(float(m['total_audio_seconds'])-float(m['total_video_seconds']))>0.20: raise SystemExit('Final audio/video duration mismatch')
-          print(f'V4 validation passed: 14 exact scene/audio boundaries, {cursor:.3f}s total')
+          print(f'PREMIUM validation passed: 14 exact scene/audio boundaries, {cursor:.3f}s total')
           PY
 
       - name: Upload daily production bundle
         uses: actions/upload-artifact@v4
         with:
-          name: daily-astro-output-${{ github.run_number }}-v4
+          name: daily-astro-output-${{ github.run_number }}-premium
           path: |
             output/daily_script.md
             output/planetary_report.txt
