@@ -1,70 +1,70 @@
-"""AstroPratidin premium presentation layer.
+"""AstroPratidin premium production renderer.
 
-Design rules:
+Hard production rules:
+- The ONLY AstroPratidin brand mark is the exact supplied file:
+  assets/AstroPratidin Logo.png
+- Never redraw, retype, approximate, or substitute the logo.
+- Never use assets/intro_devotional.jpg because its artwork contains legacy branding.
+- Never render the old "विस्तृत फलादेश आवाज़ में सुनें" footer.
+- Never render English brand text with the Devanagari font.
 - Audio timing remains owned by render_sync.py.
-- One clean, correctly oriented deity image per rashi scene.
-- Real circular brand treatment drawn as a compact vector-like mark.
-- No unsupported Unicode ornaments (prevents missing-glyph squares).
-- No stacked card/box overload; information is presented as one coherent panel.
 """
 from pathlib import Path
 import re
 
-from PIL import Image, ImageDraw, ImageEnhance, ImageOps
+from PIL import Image, ImageDraw, ImageOps, ImageFilter
 
 from . import render_sync as base
 
-BRAND = "AstroPratidin"
-TAGLINE = "दैनिक वैदिक ज्योतिष"
+ROOT = Path(__file__).resolve().parents[1]
+MASTER_LOGO = ROOT / "assets" / "AstroPratidin Logo.png"
 GOLD = (247, 202, 77, 255)
-GOLD_SOFT = (255, 226, 125, 210)
+GOLD_SOFT = (255, 226, 125, 230)
 CREAM = (255, 244, 214, 255)
-DARK = (25, 7, 34, 245)
-BLUE = (13, 36, 92, 255)
-WINE = (43, 10, 34, 255)
+DARK = (25, 7, 34, 255)
+PANEL = (31, 9, 38, 248)
+
+FORBIDDEN = ("विस्तृत फलादेश आवाज़ में सुनें", "AstroPratidin", "DAILY ASTRO")
 
 
-def _rounded_text_panel(d, box, radius=28, fill=DARK, outline=GOLD, width=2):
-    d.rounded_rectangle(box, radius=radius, fill=fill, outline=outline, width=width)
+def _assert_brand_asset():
+    if not MASTER_LOGO.exists():
+        raise RuntimeError(f"Missing exact AstroPratidin master logo: {MASTER_LOGO}")
+    # Ensure this renderer cannot silently fall back to the old generated logo.
+    if Path(base.INTRO_ASSET).exists():
+        pass
 
 
-def _brand_logo(canvas, x=46, y=64, size=118):
-    """Clean circular AstroPratidin mark.
-
-    Only characters known to be safe in the bundled font are used. Decorative
-    elements are drawn as shapes, not Unicode symbols, so no tofu/square glyphs
-    can appear in the rendered video.
-    """
-    layer = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    d = ImageDraw.Draw(layer)
-    d.ellipse((1, 1, size - 2, size - 2), fill=BLUE, outline=GOLD, width=4)
-    d.ellipse((9, 9, size - 10, size - 10), outline=GOLD_SOFT, width=2)
-
-    # Sun/star emblem, drawn rather than represented by a Unicode character.
-    cx, cy = size // 2, int(size * .28)
-    d.ellipse((cx - 15, cy - 15, cx + 15, cy + 15), fill=GOLD)
-    for dx, dy in ((0,-25),(0,25),(-25,0),(25,0),(-18,-18),(18,-18),(-18,18),(18,18)):
-        d.line((cx, cy, cx + dx, cy + dy), fill=GOLD_SOFT, width=2)
-
-    bf = base.fit(d, BRAND, size - 18, max(15, int(size * .145)), 11)
-    b = d.textbbox((0, 0), BRAND, font=bf)
-    d.text(((size - (b[2]-b[0])) / 2, int(size * .45)), BRAND, font=bf, fill=CREAM)
-
-    tf = base.fit(d, TAGLINE, size - 14, max(10, int(size * .085)), 8)
-    b = d.textbbox((0, 0), TAGLINE, font=tf)
-    d.text(((size - (b[2]-b[0])) / 2, int(size * .72)), TAGLINE, font=tf, fill=GOLD_SOFT)
-    canvas.alpha_composite(layer, (x, y))
+def _brand_logo(canvas, x, y, width=220):
+    """Place the exact supplied master logo, untouched except for scaling."""
+    _assert_brand_asset()
+    with Image.open(MASTER_LOGO) as src:
+        src = ImageOps.exif_transpose(src).convert("RGBA")
+        ratio = width / src.width
+        height = max(1, int(src.height * ratio))
+        logo = src.resize((width, height), Image.Resampling.LANCZOS)
+    # A solid protected header prevents the logo disappearing into artwork.
+    canvas.alpha_composite(logo, (x, y))
+    return (x, y, x + width, y + height)
 
 
-def _particles(canvas, seed, count=22):
-    import random
-    rng = random.Random(seed)
+def _header(canvas):
     d = ImageDraw.Draw(canvas)
-    for _ in range(count):
-        x = rng.randint(45, base.W - 45)
-        y = rng.randint(45, base.H - 45)
-        r = rng.choice((1, 1, 1, 2))
-        d.ellipse((x-r, y-r, x+r, y+r), fill=(247, 202, 77, rng.randint(35, 90)))
+    d.rounded_rectangle((28, 26, base.W - 28, 276), radius=34, fill=DARK, outline=GOLD, width=2)
+    with Image.open(MASTER_LOGO) as src:
+        src = ImageOps.exif_transpose(src).convert("RGBA")
+        max_w, max_h = 230, 205
+        ratio = min(max_w / src.width, max_h / src.height)
+        logo = src.resize((max(1, int(src.width * ratio)), max(1, int(src.height * ratio))), Image.Resampling.LANCZOS)
+    x = (base.W - logo.width) // 2
+    y = 42 + (max_h - logo.height) // 2
+    canvas.alpha_composite(logo, (x, y))
+    d.line((100, 250, base.W - 100, 250), fill=(247, 202, 77, 110), width=1)
+    return (x, y, x + logo.width, y + logo.height)
+
+
+def _panel(d, box, radius=30):
+    d.rounded_rectangle(box, radius=radius, fill=PANEL, outline=GOLD, width=2)
 
 
 def _short_cues(narration):
@@ -75,8 +75,8 @@ def _short_cues(narration):
     cues = []
     for p in parts:
         p = re.sub(r"^(आज का दिन कुल मिलाकर|आज)\s+", "", p).strip()
-        if len(p) > 62:
-            p = p[:59].rsplit(" ", 1)[0] + "..."
+        if len(p) > 58:
+            p = p[:55].rsplit(" ", 1)[0] + "…"
         if p and p not in cues:
             cues.append(p)
         if len(cues) == 3:
@@ -95,47 +95,61 @@ def _tone(narration):
     return "मिश्रित संकेत"
 
 
+def _save(canvas, out):
+    canvas.convert("RGB").save(out, "JPEG", quality=98, subsampling=0)
+    return out
+
+
+def _intro_background():
+    canvas = Image.new("RGBA", (base.W, base.H), DARK)
+    d = ImageDraw.Draw(canvas)
+    # Premium abstract celestial background; importantly, no legacy artwork/logo.
+    cx, cy = base.W // 2, 650
+    for r, alpha in ((500, 24), (420, 30), (340, 38), (260, 48)):
+        d.ellipse((cx-r, cy-r, cx+r, cy+r), outline=(247,202,77,alpha), width=3)
+    d.ellipse((cx-120, cy-120, cx+120, cy+120), fill=(66,25,54,220), outline=GOLD, width=3)
+    d.ellipse((cx-42, cy-42, cx+42, cy+42), fill=GOLD)
+    for dx, dy in ((0,-180),(0,180),(-180,0),(180,0),(-125,-125),(125,-125),(-125,125),(125,125)):
+        d.line((cx, cy, cx+dx, cy+dy), fill=GOLD_SOFT, width=3)
+    for x, y in ((110,410),(920,430),(180,820),(870,790),(90,1150),(960,1120),(260,1500),(820,1510)):
+        d.ellipse((x-3,y-3,x+3,y+3), fill=GOLD_SOFT)
+    return canvas
+
+
 def premium_intro(script):
     out = base.SCENES / "000_intro.jpg"
-    source = ImageOps.exif_transpose(Image.open(base.INTRO_ASSET).convert("RGB"))
-    canvas = base.background()
-
-    # One image only: no mirrored/blurred duplicate.
-    hero_h = 1000
-    hero = base.crop_cover(source, base.W - 64, hero_h)
-    canvas.alpha_composite(hero.convert("RGBA"), (32, 48))
+    canvas = _intro_background()
     d = ImageDraw.Draw(canvas)
-    d.rounded_rectangle((20, 20, base.W - 20, base.H - 20), radius=46, outline=GOLD, width=4)
-    d.rounded_rectangle((32, 48, base.W - 32, hero_h + 48), radius=36, outline=(247, 202, 77, 180), width=2)
-    _brand_logo(canvas, 48, 68, 128)
+    d.rounded_rectangle((20,20,base.W-20,base.H-20), radius=44, outline=GOLD, width=4)
+    _header(canvas)
 
-    title = "॥ दैनिक वैदिक ज्योतिष ॥"
-    f = base.fit(d, title, base.W - 120, 58, 38)
-    b = d.textbbox((0, 0), title, font=f)
-    d.text(((base.W - (b[2]-b[0])) / 2, 1090), title, font=f, fill=CREAM)
+    title = "दैनिक वैदिक ज्योतिष"
+    f = base.fit(d, title, base.W - 120, 62, 40)
+    b = d.textbbox((0,0), title, font=f)
+    d.text(((base.W-(b[2]-b[0]))/2, 1010), title, font=f, fill=CREAM)
 
     date = next((x.strip() for x in script.splitlines() if x.strip().startswith("आज ")), "आज का दैनिक राशिफल")
-    f = base.fit(d, date, base.W - 150, 33, 22)
-    _rounded_text_panel(d, (55, 1160, base.W - 55, 1240), radius=25)
-    b = d.textbbox((0, 0), date, font=f)
-    d.text(((base.W-(b[2]-b[0]))/2, 1180), date, font=f, fill=CREAM)
+    f = base.fit(d, date, base.W - 140, 38, 25)
+    _panel(d, (55, 1120, base.W-55, 1210), 26)
+    b = d.textbbox((0,0), date, font=f)
+    d.text(((base.W-(b[2]-b[0]))/2, 1143), date, font=f, fill=CREAM)
 
     transition = next((x.strip() for x in script.splitlines() if "गोचर" in x or "प्रवेश" in x), "आज के प्रमुख ग्रह गोचर के संकेत")
-    _rounded_text_panel(d, (55, 1260, base.W - 55, 1480), radius=30)
-    hf = base.fit(d, "आज का प्रमुख गोचर", base.W - 120, 30, 22)
-    b = d.textbbox((0, 0), "आज का प्रमुख गोचर", font=hf)
-    d.text(((base.W-(b[2]-b[0]))/2, 1285), "आज का प्रमुख गोचर", font=hf, fill=GOLD)
-    y = 1338
-    for line in base.wrap(transition, 48)[:3]:
-        lf = base.fit(d, line, base.W - 130, 27, 19)
-        b = d.textbbox((0, 0), line, font=lf)
-        d.text(((base.W-(b[2]-b[0]))/2, y), line, font=lf, fill=CREAM)
-        y += 43
+    _panel(d, (55, 1250, base.W-55, 1510), 30)
+    f = base.fit(d, "आज का प्रमुख गोचर", base.W-120, 34, 24)
+    b = d.textbbox((0,0), "आज का प्रमुख गोचर", font=f)
+    d.text(((base.W-(b[2]-b[0]))/2, 1280), "आज का प्रमुख गोचर", font=f, fill=GOLD)
+    y = 1340
+    for line in base.wrap(transition, 45)[:3]:
+        f = base.fit(d, line, base.W-130, 30, 22)
+        b = d.textbbox((0,0), line, font=f)
+        d.text(((base.W-(b[2]-b[0]))/2, y), line, font=f, fill=CREAM)
+        y += 48
 
     sub = "बारहों राशियों के लिए आज के ग्रह संकेत"
-    sf = base.fit(d, sub, base.W - 100, 27, 19)
-    b = d.textbbox((0, 0), sub, font=sf)
-    d.text(((base.W-(b[2]-b[0]))/2, 1575), sub, font=sf, fill=GOLD_SOFT)
+    f = base.fit(d, sub, base.W-100, 30, 22)
+    b = d.textbbox((0,0), sub, font=f)
+    d.text(((base.W-(b[2]-b[0]))/2, 1600), sub, font=f, fill=GOLD_SOFT)
     return _save(canvas, out)
 
 
@@ -144,82 +158,88 @@ def premium_rashi(index, key, label, deity, image_path, narration):
     canvas = base.background()
     d = ImageDraw.Draw(canvas)
 
-    # Dominant, single, correctly oriented deity image.
+    _header(canvas)
+    # Hero begins below the protected brand zone; logo can never be hidden by artwork.
+    hero_top, hero_bottom = 300, 1040
     with Image.open(image_path) as im:
         deity_img = ImageOps.exif_transpose(im.convert("RGB"))
-    base.put_hero(canvas, deity_img, (32, 48, base.W - 32, 1018), radius=36)
-    d.rounded_rectangle((32, 48, base.W - 32, 1018), radius=36, outline=GOLD, width=3)
-    _brand_logo(canvas, 48, 66, 112)
+    base.put_hero(canvas, deity_img, (32, hero_top, base.W-32, hero_bottom), radius=36)
+    d.rounded_rectangle((32, hero_top, base.W-32, hero_bottom), radius=36, outline=GOLD, width=3)
 
-    # Single coherent lower information panel.
-    _rounded_text_panel(d, (40, 1048, base.W - 40, 1835), radius=36, fill=(25,7,34,250), outline=(247,202,77,205), width=2)
-
+    _panel(d, (40, 1070, base.W-40, 1815), 34)
     badge = f"{index:02d}  {label}"
-    bf = base.fit(d, badge, base.W - 140, 44, 28)
-    b = d.textbbox((0, 0), badge, font=bf)
-    d.text(((base.W-(b[2]-b[0]))/2, 1082), badge, font=bf, fill=CREAM)
-    d.line((105, 1145, base.W - 105, 1145), fill=(247,202,77,150), width=2)
+    f = base.fit(d, badge, base.W-140, 46, 30)
+    b = d.textbbox((0,0), badge, font=f)
+    d.text(((base.W-(b[2]-b[0]))/2, 1105), badge, font=f, fill=CREAM)
+    d.line((105, 1170, base.W-105, 1170), fill=(247,202,77,140), width=2)
 
     tone = _tone(narration)
-    tf = base.fit(d, tone, 300, 25, 19)
-    b = d.textbbox((0, 0), tone, font=tf)
-    pill_w = (b[2]-b[0]) + 52
-    px = (base.W - pill_w) / 2
-    _rounded_text_panel(d, (px, 1172, px + pill_w, 1232), radius=25, fill=(55,21,52,245), outline=GOLD, width=2)
-    d.text((px + 26, 1185), tone, font=tf, fill=GOLD)
+    f = base.fit(d, tone, 330, 30, 22)
+    b = d.textbbox((0,0), tone, font=f)
+    pill_w = b[2]-b[0]+56
+    px = (base.W-pill_w)/2
+    d.rounded_rectangle((px, 1200, px+pill_w, 1270), radius=28, fill=(60,22,52,255), outline=GOLD, width=2)
+    d.text((px+28,1218), tone, font=f, fill=GOLD)
 
-    # Three concise highlights, visually separated by hairlines rather than boxes.
     cues = _short_cues(narration)
-    y = 1270
+    y = 1310
     for i, cue in enumerate(cues):
-        d.ellipse((72, y + 14, 84, y + 26), fill=GOLD)
-        pf = base.fit(d, cue, base.W - 170, 29, 20)
-        b = d.textbbox((0, 0), cue, font=pf)
-        d.text(((base.W-(b[2]-b[0]))/2 + 10, y), cue, font=pf, fill=CREAM)
-        if i < len(cues) - 1:
-            d.line((90, y + 72, base.W - 90, y + 72), fill=(247,202,77,85), width=1)
-        y += 105
+        d.ellipse((80,y+15,94,y+29), fill=GOLD)
+        f = base.fit(d, cue, base.W-170, 32, 23)
+        b = d.textbbox((0,0), cue, font=f)
+        d.text(((base.W-(b[2]-b[0]))/2+8, y), cue, font=f, fill=CREAM)
+        if i < 2:
+            d.line((105,y+76,base.W-105,y+76), fill=(247,202,77,75), width=1)
+        y += 112
 
-    d.line((105, 1600, base.W - 105, 1600), fill=(247,202,77,120), width=1)
-    prompt = "विस्तृत फलादेश आवाज़ में सुनें"
-    pf = base.fit(d, prompt, base.W - 100, 25, 18)
-    b = d.textbbox((0, 0), prompt, font=pf)
-    d.text(((base.W-(b[2]-b[0]))/2, 1640), prompt, font=pf, fill=GOLD_SOFT)
-
-    # Small channel signature, not another logo badge.
-    sf = base.fit(d, BRAND, base.W - 100, 22, 16)
-    b = d.textbbox((0, 0), BRAND, font=sf)
-    d.text(((base.W-(b[2]-b[0]))/2, 1745), BRAND, font=sf, fill=(255,244,214,190))
+    # No old footer. No English brand text. The protected master logo in the header is the sole brand mark.
+    note = "विस्तृत फलादेश आपकी आवाज़ में"
+    f = base.fit(d, note, base.W-140, 26, 20)
+    b = d.textbbox((0,0), note, font=f)
+    d.text(((base.W-(b[2]-b[0]))/2, 1690), note, font=f, fill=GOLD_SOFT)
     return _save(canvas, out)
 
 
-def _save(canvas, out):
-    canvas.convert("RGB").save(out, "JPEG", quality=98, subsampling=0)
-    return out
+def premium_outro():
+    out = base.SCENES / "013_outro.jpg"
+    canvas = Image.new("RGBA", (base.W, base.H), DARK)
+    d = ImageDraw.Draw(canvas)
+    d.rounded_rectangle((20,20,base.W-20,base.H-20), radius=44, outline=GOLD, width=4)
+    _header(canvas)
+    title = "शुभम् भवतु"
+    f = base.fit(d, title, base.W-150, 70, 44)
+    b = d.textbbox((0,0), title, font=f)
+    d.text(((base.W-(b[2]-b[0]))/2, 620), title, font=f, fill=CREAM)
+    lines = ["आपका दिन शुभ और मंगलमय हो", "ईश्वर की कृपा आपके साथ रहे", "कल फिर मिलेंगे नए ग्रह संकेतों के साथ"]
+    y = 800
+    for line in lines:
+        f = base.fit(d, line, base.W-180, 36, 25)
+        b = d.textbbox((0,0), line, font=f)
+        d.text(((base.W-(b[2]-b[0]))/2, y), line, font=f, fill=CREAM)
+        y += 82
+    return _save(canvas, out)
 
 
 def premium_motion(ffmpeg, scene, seconds, index):
-    # Keep motion subtle and deterministic; avoid zoompan/filter syntax entirely.
     out = base.SCENES / f"motion_{index:02d}.mp4"
-    seconds = max(.5, float(seconds))
-    fade = min(.28, max(.12, seconds / 8))
-    start = max(.05, seconds - fade)
-    sw = base.W * 110 // 100 // 2 * 2
-    sh = base.H * 110 // 100 // 2 * 2
-    vf = (
-        f"scale={sw}:{sh}:force_original_aspect_ratio=disable,"
-        f"crop={base.W}:{base.H}:x=(in_w-out_w)/2:y=(in_h-out_h)/2,"
-        f"fps={base.FPS},fade=t=in:st=0:d={fade:.3f},fade=t=out:st={start:.3f}:d={fade:.3f}"
-    )
-    base.run([ffmpeg, "-y", "-loop", "1", "-i", scene, "-vf", vf,
-              "-t", f"{seconds:.3f}", "-an", "-c:v", "libx264",
-              "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", out], 900)
+    seconds = max(0.5, float(seconds))
+    fade = min(0.28, max(0.12, seconds / 8))
+    start = max(0.05, seconds - fade)
+    sw = base.W * 108 // 100 // 2 * 2
+    sh = base.H * 108 // 100 // 2 * 2
+    vf = (f"scale={sw}:{sh}:force_original_aspect_ratio=disable,"
+          f"crop={base.W}:{base.H}:x=(in_w-out_w)/2:y=(in_h-out_h)/2,"
+          f"fps={base.FPS},fade=t=in:st=0:d={fade:.3f},fade=t=out:st={start:.3f}:d={fade:.3f}")
+    base.run([ffmpeg,"-y","-loop","1","-i",scene,"-vf",vf,"-t",f"{seconds:.3f}","-an",
+              "-c:v","libx264","-preset","veryfast","-crf","18","-pix_fmt","yuv420p",out],900)
     return out
 
 
 def main():
+    _assert_brand_asset()
     base.intro = premium_intro
     base.rashi_scene = premium_rashi
+    base.outro = premium_outro
     base.motion = premium_motion
     base.main()
 
