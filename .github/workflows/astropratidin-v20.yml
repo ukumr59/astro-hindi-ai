@@ -57,8 +57,8 @@ jobs:
           forbidden=['_brand_logo(', 'विस्तृत फलादेश आवाज़ में सुनें','विस्तृत फलादेश आपकी आवाज़ में','DAILY ASTRO','intro_devotional.jpg']
           for x in forbidden:
               if x in s: raise SystemExit(f'Forbidden legacy content: {x}')
-          for x in ['AstroPratidin Logo.png','premium_intro','_load_master_logo(440, 440)']:
-              if x not in s: raise SystemExit(f'Missing V20.1 requirement: {x}')
+          for x in ['AstroPratidin Logo.png','premium_intro','_load_master_logo(900, 900)']:
+              if x not in s: raise SystemExit(f'Missing V20.3 requirement: {x}')
           print('RENDERER CONTRACT: PASS')
           PY
 
@@ -68,7 +68,7 @@ jobs:
       - name: Generate daily content
         run: python -m astro_engine.main
 
-      - name: Render AstroPratidin V20.2 production
+      - name: Render AstroPratidin V20.3 production
         run: python -m video_engine.premium_entry
 
       - name: Output QA
@@ -85,13 +85,12 @@ jobs:
               with Image.open(p) as im:
                   if im.size!=(1080,1920): raise SystemExit(f'Bad dimensions: {p.name} {im.size}')
 
-          # Validate the logo by comparing ONLY pixels covered by the supplied
-          # master logo's alpha mask. The surrounding astrology rings are allowed
-          # to remain visible behind transparent parts of the logo. This avoids
-          # falsely rejecting a correct render because the background differs.
+          # V20.3: validate the exact master logo at the new 900px central size.
+          # Only pixels covered by the supplied logo's alpha mask are compared;
+          # the supporting concentric-ring background is intentionally allowed.
           intro=out/'video_scenes/000_intro.jpg'
           with Image.open(intro).convert('RGB') as im, Image.open('assets/AstroPratidin Logo.png').convert('RGBA') as logo:
-              ratio=min(440/logo.width,440/logo.height)
+              ratio=min(900/logo.width,900/logo.height)
               logo=logo.resize((max(1,int(logo.width*ratio)),max(1,int(logo.height*ratio))),Image.Resampling.LANCZOS)
               x=(1080-logo.width)//2; y=610-logo.height//2
               actual=np.asarray(im.crop((x,y,x+logo.width,y+logo.height)),dtype=np.int16)
@@ -101,9 +100,7 @@ jobs:
               if int(mask.sum()) < 10000: raise SystemExit('Master logo alpha mask unexpectedly small')
               mae=np.abs(actual[mask]-target[mask]).mean()
               if mae>32: raise SystemExit(f'Central master-logo visual mismatch: alpha-aware MAE {mae:.1f}')
-              # Require a substantial amount of high-alpha logo material in the
-              # expected central region; this prevents a blank-center false pass.
-              print(f'CENTRAL MASTER LOGO: PASS (alpha-aware MAE {mae:.1f})')
+              print(f'CENTRAL MASTER LOGO V20.3: PASS (alpha-aware MAE {mae:.1f})')
 
           # No legacy footer may survive in generated text/metadata.
           for p in out.rglob('*'):
