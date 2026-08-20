@@ -12,7 +12,7 @@ permissions:
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Checkout project
@@ -52,8 +52,8 @@ jobs:
       - name: Generate daily Hindi astrology content
         run: python -m astro_engine.main
 
-      - name: Generate devotional video
-        run: python -m video_engine.render
+      - name: Generate audio-led synchronized devotional video
+        run: python -m video_engine.render_sync
 
       - name: Validate generated outputs
         run: |
@@ -62,6 +62,19 @@ jobs:
           test -s output/daily_voice.mp3
           test -s output/daily_video.mp4
           test -s output/video_poster.png
+          test -s output/sync_manifest.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          m = json.loads(Path('output/sync_manifest.json').read_text(encoding='utf-8'))
+          if len(m.get('segments', [])) != 14:
+              raise SystemExit(f"Expected 14 sync segments, got {len(m.get('segments', []))}")
+          if any(float(x.get('audio_seconds', 0)) <= 0 for x in m['segments']):
+              raise SystemExit('One or more synchronized audio segments has zero duration')
+          print('Audio-led sync validation passed: 14 segments')
+          for x in m['segments']:
+              print(f"{x['index']:02d} {x['label']}: {x['audio_seconds']:.2f}s")
+          PY
           echo "===== GENERATED FILES ====="
           find output -maxdepth 2 -type f -printf '%p %k KB\n' | sort
           echo "==========================="
@@ -76,6 +89,7 @@ jobs:
             output/daily_voice.mp3
             output/daily_video.mp4
             output/video_poster.png
+            output/sync_manifest.json
             output/deity_credits.txt
             output/video_scenes/*.jpg
           retention-days: 7
