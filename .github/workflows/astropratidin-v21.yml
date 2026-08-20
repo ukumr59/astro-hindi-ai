@@ -1,12 +1,8 @@
 name: AstroPratidin V21.9.5 Final Production
 
 on:
-  # FINAL PRODUCTION IS MANUAL ONLY.
-  # Do not trigger a production render on every renderer/QA commit.
   workflow_dispatch:
 
-# If the final production render is manually started twice, keep only the
-# newest one. This prevents parallel expensive renders.
 concurrency:
   group: astropratidin-v21-final-production
   cancel-in-progress: true
@@ -78,11 +74,19 @@ jobs:
           if set(profiles.RASHI_PROFILES)!=rashi_keys: raise SystemExit('Rashi visual-profile coverage mismatch')
           if set(profiles.MOTION)!={'intro','push_in','drift_right','drift_left'}: raise SystemExit('Motion profile coverage mismatch')
           active_files=[Path('video_engine/premium_entry.py'),Path('video_engine/premium_entry_v21_1.py'),Path('video_engine/visual_profiles.py')]
-          forbidden=['intro_devotional.jpg','विस्तृत फलादेश आवाज़ में सुनें','विस्तृत फलादेश आपकी आवाज़ में','DAILY ASTRO','•','□','�','…']
+          forbidden=['intro_devotional.jpg','विस्तृत फलादेश आवाज़ में सुनें','विस्तृत फलादेश आपकी आवाज़ में','DAILY ASTRO']
           for path in active_files:
               text=path.read_text(encoding='utf-8',errors='ignore')
               for item in forbidden:
-                  if item in text: raise SystemExit(f'Forbidden active-renderer content/glyph in {path}: {item}')
+                  if item in text: raise SystemExit(f'Forbidden active-renderer content in {path}: {item}')
+          # The renderer deliberately contains sanitizer literals for characters that
+          # must never reach the output. Test the sanitizer at runtime instead of
+          # falsely rejecting the implementation for containing its own guard list.
+          dangerous=['•','□','�','…']
+          for sample in dangerous:
+              cleaned=premium._safe_display('परीक्षण'+sample+'पाठ')
+              if any(ch in cleaned for ch in dangerous):
+                  raise SystemExit(f'Safe-display sanitizer failed for {repr(sample)}')
           premium_src=inspect.getsource(premium.main); hardened_src=inspect.getsource(hardened.main)
           for needle in ['base.intro = premium_intro','base.rashi_scene = premium_rashi','base.outro = premium_outro','base.motion = premium_motion']:
               if needle not in premium_src: raise SystemExit(f'V21 hook wiring missing: {needle}')
@@ -180,10 +184,6 @@ jobs:
               if int(mask.sum())<10000: raise SystemExit('Master logo alpha mask unexpectedly small')
               mae=np.abs(actual[mask]-target[mask]).mean()
               if mae>32: raise SystemExit(f'Central master-logo visual mismatch: {mae:.1f}')
-          for source in [Path('video_engine/premium_entry.py'),Path('video_engine/premium_entry_v21_1.py')]:
-              t=source.read_text(encoding='utf-8',errors='ignore')
-              for token in ['•','□','�','…']:
-                  if token in t: raise SystemExit(f'Forbidden renderer glyph remains in {source}: {token}')
           for p in out.rglob('*'):
               if p.is_file() and p.suffix.lower() in {'.md','.txt','.json'}:
                   t=p.read_text(encoding='utf-8',errors='ignore')
