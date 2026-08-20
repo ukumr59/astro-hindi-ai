@@ -1,7 +1,22 @@
-"""V21.3 production entrypoint with resilient premium motion rendering."""
+"""V21.4.2 production entrypoint with resilient premium motion rendering."""
+from pathlib import Path
 from . import premium_entry as v21
 from . import render_sync as base
 from .visual_profiles import RASHI_PROFILES, MOTION
+
+
+def _normalize_sar(ffmpeg, out):
+    """Normalize each generated motion MP4 before the shared concat stage."""
+    src = Path(out)
+    tmp = src.with_name(src.stem + ".sar-normalized.mp4")
+    vf = f"scale={base.W}:{base.H},setsar=1,format=yuv420p"
+    base.run([
+        ffmpeg, "-y", "-i", src,
+        "-vf", vf,
+        "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+        "-pix_fmt", "yuv420p", "-threads", "2", "-movflags", "+faststart", tmp
+    ], 900)
+    tmp.replace(src)
 
 
 def _encode_motion(ffmpeg, scene, out, seconds, profile, *, safe=False):
@@ -38,23 +53,18 @@ def _encode_motion(ffmpeg, scene, out, seconds, profile, *, safe=False):
         "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
         "-pix_fmt", "yuv420p", "-threads", "2", "-movflags", "+faststart", out
     ], 900)
+    _normalize_sar(ffmpeg, out)
 
 
 def motion_profile(index):
-    """Resolve the 14-scene timeline without indexing past the 12 Rashis.
-
-    Scene 0 is the intro, scenes 1-12 are the canonical Rashis, and scene 13
-    is the outro. The outro deliberately uses the intro's restrained motion
-    profile rather than borrowing a nonexistent 13th Rashi profile.
-    """
+    """Resolve the 14-scene timeline without indexing past the 12 Rashis."""
     if index == 0 or index == len(base.RASHIS) + 1:
         return MOTION["intro"]
     rashi_index = index - 1
     if not 0 <= rashi_index < len(base.RASHIS):
         raise RuntimeError(f"Invalid motion scene index: {index}")
     key = base.RASHIS[rashi_index][0]
-    profile_name = RASHI_PROFILES[key]["motion"]
-    return MOTION[profile_name]
+    return MOTION[RASHI_PROFILES[key]["motion"]]
 
 
 def hardened_motion(ffmpeg, scene, seconds, index):
