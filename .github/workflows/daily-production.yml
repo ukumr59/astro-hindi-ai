@@ -1,6 +1,8 @@
 name: Daily Astro Hindi Video - Production
 
 on:
+  push:
+    branches: [main, premium-9-3-brand-consistency]
   schedule:
     - cron: "30 2 * * *"
   workflow_dispatch:
@@ -28,10 +30,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Syntax smoke test
-        run: python -m py_compile video_engine/render_sync.py video_engine/premium_entry.py
+      - name: Syntax and regression smoke tests
+        run: |
+          python -m py_compile video_engine/render_sync.py video_engine/premium_entry.py
+          python tests/test_branding.py
 
-      - name: Validate bundled devotional assets
+      - name: Validate bundled devotional and brand assets
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -45,8 +49,11 @@ jobs:
                   im = ImageOps.exif_transpose(im)
                   print(name, im.size, im.mode)
                   if min(im.size) < 1200: raise SystemExit(f'Artwork below 1200px: {p} -> {im.size}')
-          for p in ['assets/NotoSansDevanagari-Regular.ttf','assets/intro_devotional.jpg']:
+          for p in ['assets/NotoSansDevanagari-Regular.ttf','assets/intro_devotional.jpg','assets/brand/astropratidin_logo.webp']:
               if not Path(p).exists(): raise SystemExit(f'Missing required asset: {p}')
+          with Image.open('assets/brand/astropratidin_logo.webp') as im:
+              print('Master AstroPratidin logo:', im.size, im.mode)
+              if min(im.size) < 160: raise SystemExit('Master logo is below production minimum')
           PY
 
       - name: Clean previous generated output
@@ -58,10 +65,10 @@ jobs:
       - name: Generate daily Hindi astrology content
         run: python -m astro_engine.main
 
-      - name: Generate V5 premium audio-led devotional video
+      - name: Generate V19 premium audio-led devotional video
         run: python -m video_engine.premium_entry
 
-      - name: Validate generated outputs
+      - name: Validate generated outputs and exact sync
         run: |
           test -s output/daily_script.md
           test -s output/planetary_report.txt
@@ -72,6 +79,7 @@ jobs:
           python - <<'PY'
           import json
           from pathlib import Path
+          from PIL import Image, ImageChops, ImageStat
           m=json.loads(Path('output/sync_manifest.json').read_text(encoding='utf-8'))
           expected=['intro','मेष','वृषभ','मिथुन','कर्क','सिंह','कन्या','तुला','वृश्चिक','धनु','मकर','कुंभ','मीन','outro']
           s=m.get('segments',[])
@@ -83,13 +91,27 @@ jobs:
               if abs(float(x.get('scene_seconds',sec))-sec)>0.10: raise SystemExit(f"Scene/audio mismatch at {x['label']}")
               cursor=end
           if abs(float(m['total_audio_seconds'])-float(m['total_video_seconds']))>0.20: raise SystemExit('Final audio/video duration mismatch')
-          print(f'PREMIUM validation passed: 14 exact scene/audio boundaries, {cursor:.3f}s total')
+          scene_paths = sorted(Path('output/video_scenes').glob('*.jpg'))
+          if len(scene_paths) != 14: raise SystemExit(f'Expected 14 scenes, found {len(scene_paths)}')
+          imgs=[]
+          for p in scene_paths:
+              with Image.open(p) as im:
+                  if im.size != (1080,1920): raise SystemExit(f'Wrong scene size: {p} {im.size}')
+                  imgs.append(im.convert('RGB').copy())
+          ref=imgs[0].crop((32,28,1048,238))
+          for p,im in zip(scene_paths[1:],imgs[1:]):
+              cur=im.crop((32,28,1048,238))
+              stat=ImageStat.Stat(ImageChops.difference(ref,cur))
+              mean=sum(stat.mean)/3
+              if mean > 1.5: raise SystemExit(f'Brand header drift detected in {p}: mean diff {mean:.3f}')
+          print(f'V19 visual/production gate passed: 14 scenes, exact sync, identical protected brand header')
+          print(f'Total duration: {cursor:.3f}s')
           PY
 
       - name: Upload daily production bundle
         uses: actions/upload-artifact@v4
         with:
-          name: daily-astro-output-${{ github.run_number }}-premium
+          name: daily-astro-output-${{ github.run_number }}-premium-v19
           path: |
             output/daily_script.md
             output/planetary_report.txt
