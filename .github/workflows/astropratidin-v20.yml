@@ -54,10 +54,12 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           s=Path('video_engine/premium_entry.py').read_text(encoding='utf-8')
-          forbidden=['_brand_logo(', 'विस्तृत फलादेश आवाज़ में सुनें','विस्तृत फलादेश आपकी आवाज़ में','assets/intro_devotional.jpg','DAILY ASTRO']
+          forbidden=['_brand_logo(', 'विस्तृत फलादेश आवाज़ में सुनें','विस्तृत फलादेश आपकी आवाज़ में','DAILY ASTRO']
           for x in forbidden:
               if x in s: raise SystemExit(f'Forbidden legacy content: {x}')
           if 'AstroPratidin Logo.png' not in s: raise SystemExit('Exact logo path not wired')
+          if 'INTRO_ASSET' in s or 'intro_devotional.jpg' in s:
+              raise SystemExit('Legacy intro asset is wired into production renderer')
           print('RENDERER CONTRACT: PASS')
           PY
 
