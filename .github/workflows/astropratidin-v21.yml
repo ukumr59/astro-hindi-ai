@@ -1,12 +1,14 @@
 name: AstroPratidin V21.9.5 Final Production
 
 on:
+  # FINAL PRODUCTION IS MANUAL ONLY.
+  # Do not trigger a production render on every renderer/QA commit.
   workflow_dispatch:
-  push:
-    branches: [v21-premium-9-5-architecture]
 
+# If the final production render is manually started twice, keep only the
+# newest one. This prevents parallel expensive renders.
 concurrency:
-  group: astropratidin-v21-final-${{ github.ref }}
+  group: astropratidin-v21-final-production
   cancel-in-progress: true
 
 permissions:
