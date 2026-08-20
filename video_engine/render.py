@@ -697,10 +697,10 @@ def _make_shani(path):
 # IMPORTANT:
 # Do NOT use the old LACMA image URLs here. Those endpoints returned 404s.
 # We use The Metropolitan Museum of Art Open Access API for six deities.
-# The Met explicitly provides public-domain images through its Open Access API.
-# Shani also uses The Metropolitan Museum of Art Open Access API.
-# The selected record is the Met's public-domain iconographic drawing of
-# Saturn/Shanaishchara, so no Wikimedia request is made at runtime.
+# ALL deity artwork is sourced from The Metropolitan Museum of Art Open Access API.
+# This deliberately avoids PICRYL/Wikimedia page scraping and eliminates the
+# 403/429 failures seen in GitHub Actions. The selected Shani record is the
+# Met's public-domain iconographic drawing of Saturn/Shanaishchara.
 
 MET_API = "https://collectionapi.metmuseum.org/public/collection/v1/objects/{}"
 
@@ -736,9 +736,9 @@ DEITY_SOURCES = {
         "credit": "The Metropolitan Museum of Art Open Access — Public Domain",
     },
     "शनि देव": {
-        "picryl_page": "https://picryl.com/media/shani-deva-fbf817",
-        "title": "Shani Deva — public-domain historical devotional image (PICRYL)",
-        "credit": "Public-domain image surfaced by PICRYL; source attribution retained in credits.",
+        "met_id": 45617,
+        "title": "Iconographic Drawing of Saturn (Doyō / Shanaishchara) — The Metropolitan Museum of Art, 1975.268.15",
+        "credit": "The Metropolitan Museum of Art Open Access — Public Domain",
     },
 }
 
@@ -760,21 +760,6 @@ def met_object_image(met_id):
 
 
 
-def picryl_image_url(page_url):
-    """Resolve the og:image from a public-domain PICRYL media page."""
-    raw = request_bytes(page_url, timeout=60)
-    html = raw.decode("utf-8", "ignore")
-    patterns = [
-        r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
-        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, html, flags=re.I)
-        if match:
-            return urllib.parse.urljoin(page_url, match.group(1))
-    raise RuntimeError("PICRYL page did not expose an og:image URL.")
-
-
 def download_deity(item_index, deity, query):
     destination = DEITIES / f"deity_{item_index:02d}.jpg"
     source = DEITY_SOURCES.get(deity)
@@ -786,10 +771,8 @@ def download_deity(item_index, deity, query):
     # paths that can become stale while keeping the source authoritative.
     if "met_id" in source:
         image_url = met_object_image(source["met_id"])
-    elif "picryl_page" in source:
-        image_url = picryl_image_url(source["picryl_page"])
     else:
-        image_url = source["url"]
+        raise RuntimeError(f"Unsupported deity artwork source for {deity}.")
 
     print(f"Downloading real deity artwork: {deity}")
     print(f"Artwork source: {image_url}")
