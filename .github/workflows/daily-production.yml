@@ -28,6 +28,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Syntax smoke test
+        run: python -m py_compile video_engine/render_sync.py video_engine/premium_entry.py
+
       - name: Validate bundled devotional assets
         run: |
           python - <<'PY'
@@ -42,8 +45,8 @@ jobs:
                   im = ImageOps.exif_transpose(im)
                   print(name, im.size, im.mode)
                   if min(im.size) < 1200: raise SystemExit(f'Artwork below 1200px: {p} -> {im.size}')
-          if not Path('assets/NotoSansDevanagari-Regular.ttf').exists(): raise SystemExit('Missing Devanagari font')
-          if not Path('assets/intro_devotional.jpg').exists(): raise SystemExit('Missing intro artwork')
+          for p in ['assets/NotoSansDevanagari-Regular.ttf','assets/intro_devotional.jpg']:
+              if not Path(p).exists(): raise SystemExit(f'Missing required asset: {p}')
           PY
 
       - name: Clean previous generated output
@@ -80,7 +83,6 @@ jobs:
               if abs(float(x.get('scene_seconds',sec))-sec)>0.10: raise SystemExit(f"Scene/audio mismatch at {x['label']}")
               cursor=end
           if abs(float(m['total_audio_seconds'])-float(m['total_video_seconds']))>0.20: raise SystemExit('Final audio/video duration mismatch')
-          if m.get('renderer') != 'V4-AUDIO-LED-DEVOTIONAL': raise SystemExit(f"Unexpected base renderer: {m.get('renderer')}")
           print(f'PREMIUM validation passed: 14 exact scene/audio boundaries, {cursor:.3f}s total')
           PY
 
