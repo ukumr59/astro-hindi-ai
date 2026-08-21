@@ -1,9 +1,8 @@
 """Publish the daily AstroPratidin set to YouTube and verify processing.
 
-Uploads exactly 13 videos per successful render:
-1 combined 12-Rashi video + 12 individual Rashi videos.
-The script fails if any upload is rejected or remains unprocessed past the
-verification window, preventing a green workflow from claiming a broken upload.
+Uploads exactly 13 videos per successful render: 1 combined 12-Rashi video
+plus 12 individual Rashi videos. All uploads are submitted before processing
+verification so YouTube can process them in parallel.
 """
 from pathlib import Path
 import datetime as dt
@@ -17,7 +16,6 @@ from googleapiclient.http import MediaFileUpload
 
 OUT = Path("output")
 UPLOADS = OUT / "youtube_uploads"
-
 RASHIS = [
     (1, "मेष", "मेष राशि"), (2, "वृषभ", "वृषभ राशि"),
     (3, "मिथुन", "मिथुन राशि"), (4, "कर्क", "कर्क राशि"),
@@ -30,16 +28,8 @@ RASHIS = [
 
 def upload(youtube, path, title, description, tags):
     body = {
-        "snippet": {
-            "title": title[:100],
-            "description": description[:4900],
-            "categoryId": "22",
-            "tags": tags,
-        },
-        "status": {
-            "privacyStatus": "public",
-            "selfDeclaredMadeForKids": False,
-        },
+        "snippet": {"title": title[:100], "description": description[:4900], "categoryId": "22", "tags": tags},
+        "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False},
     }
     media = MediaFileUpload(str(path), mimetype="video/mp4", chunksize=8 * 1024 * 1024, resumable=True)
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
@@ -85,34 +75,41 @@ def main():
     today = dt.date.today().isoformat()
     script = (OUT / "daily_script.md").read_text(encoding="utf-8")
     base_description = "AstroPratidin — आपका दैनिक ज्योतिष साथी।\n\n"
+    jobs = []
+
     combined = OUT / "daily_video.mp4"
     if not combined.exists():
         raise SystemExit("Combined daily video missing")
-    results = []
-    combined_title = f"आज का राशिफल | AstroPratidin | {today}"
-    combined_desc = (base_description + script + "\n\n#AstroPratidin #दैनिकराशिफल #ज्योतिष #राशिफल")
-    vid = upload(youtube, combined, combined_title, combined_desc, ["AstroPratidin", "दैनिक राशिफल", "राशिफल", "ज्योतिष", "आज का राशिफल"])
-    print(f"COMBINED_VIDEO_ID={vid}")
-    verify_processing(youtube, vid)
-    results.append({"type": "combined", "rashi": None, "video_id": vid, "url": f"https://www.youtube.com/watch?v={vid}"})
+    jobs.append(("combined", None, combined,
+                 f"आज का राशिफल | AstroPratidin | {today}",
+                 base_description + script + "\n\n#AstroPratidin #दैनिकराशिफल #ज्योतिष #राशिफल",
+                 ["AstroPratidin", "दैनिक राशिफल", "राशिफल", "ज्योतिष", "आज का राशिफल"]))
 
     for index, key, label in RASHIS:
         path = UPLOADS / f"{index:02d}_{key}.mp4"
         if not path.exists():
             raise SystemExit(f"Individual Rashi video missing: {path}")
-        title = f"आज का {label} राशिफल | AstroPratidin | {today}"
         description = (
             f"AstroPratidin — {label} के लिए आज का दैनिक राशिफल।\n\n"
             f"{key} राशि के ग्रह गोचर, संकेत और आज के महत्वपूर्ण ज्योतिषीय मार्गदर्शन के लिए यह दैनिक वीडियो देखें।\n\n"
             f"#AstroPratidin #{key}राशि #दैनिकराशिफल #ज्योतिष #राशिफल"
         )
-        vid = upload(youtube, path, title, description, ["AstroPratidin", label, f"{key} राशि", "दैनिक राशिफल", "ज्योतिष"])
-        print(f"RASHI_VIDEO_ID_{index:02d}={vid}")
-        verify_processing(youtube, vid)
-        results.append({"type": "rashi", "rashi": key, "video_id": vid, "url": f"https://www.youtube.com/watch?v={vid}"})
+        jobs.append(("rashi", key, path, f"आज का {label} राशिफल | AstroPratidin | {today}", description,
+                     ["AstroPratidin", label, f"{key} राशि", "दैनिक राशिफल", "ज्योतिष"]))
 
-    if len(results) != 13:
-        raise SystemExit(f"Expected 13 published videos, got {len(results)}")
+    results = []
+    print("YOUTUBE UPLOAD PLAN: 1 combined + 12 Rashi videos = 13 total")
+    for kind, rashi, path, title, description, tags in jobs:
+        vid = upload(youtube, path, title, description, tags)
+        print(f"UPLOADED {kind} {rashi or 'combined'}: {vid}")
+        results.append({"type": kind, "rashi": rashi, "video_id": vid, "url": f"https://www.youtube.com/watch?v={vid}"})
+
+    print("ALL 13 UPLOADS ACCEPTED — VERIFYING YOUTUBE PROCESSING")
+    for result in results:
+        verify_processing(youtube, result["video_id"])
+
     manifest = OUT / "youtube_publish_manifest.json"
     manifest.write_text(json.dumps({"date": today, "videos": results}, ensure_ascii=False, indent=2), encoding="utf-8")
     print("YOUTUBE DAILY PUBLISH: PASS — 1 combined + 12 Rashi videos")
+    for result in results:
+        print(f"PUBLISHED_{result['type'].upper()}={result['video_id']}")
