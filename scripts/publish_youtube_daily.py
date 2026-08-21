@@ -1,0 +1,118 @@
+"""Publish the daily AstroPratidin set to YouTube and verify processing.
+
+Uploads exactly 13 videos per successful render:
+1 combined 12-Rashi video + 12 individual Rashi videos.
+The script fails if any upload is rejected or remains unprocessed past the
+verification window, preventing a green workflow from claiming a broken upload.
+"""
+from pathlib import Path
+import datetime as dt
+import json
+import os
+import time
+
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+
+OUT = Path("output")
+UPLOADS = OUT / "youtube_uploads"
+
+RASHIS = [
+    (1, "मेष", "मेष राशि"), (2, "वृषभ", "वृषभ राशि"),
+    (3, "मिथुन", "मिथुन राशि"), (4, "कर्क", "कर्क राशि"),
+    (5, "सिंह", "सिंह राशि"), (6, "कन्या", "कन्या राशि"),
+    (7, "तुला", "तुला राशि"), (8, "वृश्चिक", "वृश्चिक राशि"),
+    (9, "धनु", "धनु राशि"), (10, "मकर", "मकर राशि"),
+    (11, "कुंभ", "कुंभ राशि"), (12, "मीन", "मीन राशि"),
+]
+
+
+def upload(youtube, path, title, description, tags):
+    body = {
+        "snippet": {
+            "title": title[:100],
+            "description": description[:4900],
+            "categoryId": "22",
+            "tags": tags,
+        },
+        "status": {
+            "privacyStatus": "public",
+            "selfDeclaredMadeForKids": False,
+        },
+    }
+    media = MediaFileUpload(str(path), mimetype="video/mp4", chunksize=8 * 1024 * 1024, resumable=True)
+    request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
+    response = None
+    while response is None:
+        status, response = request.next_chunk()
+        if status:
+            print(f"YouTube upload {path.name}: {int(status.progress() * 100)}%")
+    return response["id"]
+
+
+def verify_processing(youtube, video_id, timeout_seconds=900):
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        item = youtube.videos().list(part="status,processingDetails", id=video_id).execute().get("items", [])
+        if not item:
+            raise RuntimeError(f"YouTube video disappeared after upload: {video_id}")
+        video = item[0]
+        status = video.get("status", {})
+        processing = video.get("processingDetails", {})
+        upload_status = status.get("uploadStatus")
+        processing_status = processing.get("processingStatus")
+        print(f"VERIFY {video_id}: uploadStatus={upload_status} processingStatus={processing_status} privacy={status.get('privacyStatus')}")
+        if upload_status in {"failed", "rejected"}:
+            raise RuntimeError(f"YouTube upload failed for {video_id}: {status.get('failureReason') or status.get('rejectionReason')}")
+        if processing_status == "failed":
+            raise RuntimeError(f"YouTube processing failed for {video_id}: {processing.get('processingFailureReason')}")
+        if upload_status == "processed" and processing_status == "succeeded":
+            if status.get("privacyStatus") != "public":
+                raise RuntimeError(f"YouTube privacy status is {status.get('privacyStatus')} for {video_id}, expected public")
+            return
+        time.sleep(15)
+    raise RuntimeError(f"YouTube processing verification timed out for {video_id}")
+
+
+def main():
+    raw = os.environ.get("YOUTUBE_TOKEN_JSON", "")
+    if not raw:
+        raise SystemExit("Missing ASTROPRATIDIN_YOUTUBE_TOKEN_JSON repository secret")
+    token = json.loads(raw)
+    creds = Credentials.from_authorized_user_info(token, scopes=["https://www.googleapis.com/auth/youtube.upload"])
+    youtube = build("youtube", "v3", credentials=creds)
+    today = dt.date.today().isoformat()
+    script = (OUT / "daily_script.md").read_text(encoding="utf-8")
+    base_description = "AstroPratidin — आपका दैनिक ज्योतिष साथी।\n\n"
+    combined = OUT / "daily_video.mp4"
+    if not combined.exists():
+        raise SystemExit("Combined daily video missing")
+    results = []
+    combined_title = f"आज का राशिफल | AstroPratidin | {today}"
+    combined_desc = (base_description + script + "\n\n#AstroPratidin #दैनिकराशिफल #ज्योतिष #राशिफल")
+    vid = upload(youtube, combined, combined_title, combined_desc, ["AstroPratidin", "दैनिक राशिफल", "राशिफल", "ज्योतिष", "आज का राशिफल"])
+    print(f"COMBINED_VIDEO_ID={vid}")
+    verify_processing(youtube, vid)
+    results.append({"type": "combined", "rashi": None, "video_id": vid, "url": f"https://www.youtube.com/watch?v={vid}"})
+
+    for index, key, label in RASHIS:
+        path = UPLOADS / f"{index:02d}_{key}.mp4"
+        if not path.exists():
+            raise SystemExit(f"Individual Rashi video missing: {path}")
+        title = f"आज का {label} राशिफल | AstroPratidin | {today}"
+        description = (
+            f"AstroPratidin — {label} के लिए आज का दैनिक राशिफल।\n\n"
+            f"{key} राशि के ग्रह गोचर, संकेत और आज के महत्वपूर्ण ज्योतिषीय मार्गदर्शन के लिए यह दैनिक वीडियो देखें।\n\n"
+            f"#AstroPratidin #{key}राशि #दैनिकराशिफल #ज्योतिष #राशिफल"
+        )
+        vid = upload(youtube, path, title, description, ["AstroPratidin", label, f"{key} राशि", "दैनिक राशिफल", "ज्योतिष"])
+        print(f"RASHI_VIDEO_ID_{index:02d}={vid}")
+        verify_processing(youtube, vid)
+        results.append({"type": "rashi", "rashi": key, "video_id": vid, "url": f"https://www.youtube.com/watch?v={vid}"})
+
+    if len(results) != 13:
+        raise SystemExit(f"Expected 13 published videos, got {len(results)}")
+    manifest = OUT / "youtube_publish_manifest.json"
+    manifest.write_text(json.dumps({"date": today, "videos": results}, ensure_ascii=False, indent=2), encoding="utf-8")
+    print("YOUTUBE DAILY PUBLISH: PASS — 1 combined + 12 Rashi videos")
