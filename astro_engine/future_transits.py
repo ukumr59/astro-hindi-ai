@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from .ephemeris import RealEphemeris
@@ -80,7 +80,7 @@ def find_major_transits(start, days=7):
                 "to_sign": to_sign,
                 "importance": importance,
                 "description_hi": description,
-                "occurrence_utc": occurrence.astimezone(__import__('datetime').timezone.utc).isoformat(),
+                "occurrence_utc": occurrence.astimezone(timezone.utc).isoformat(),
                 "occurrence_ist": occurrence.astimezone(IST).isoformat(),
                 "publish_on_ist": (occurrence.astimezone(IST).date() - timedelta(days=7)).isoformat(),
             })
