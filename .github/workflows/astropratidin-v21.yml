@@ -3,8 +3,9 @@ name: AstroPratidin V21.9.5 Final Production
 on:
   workflow_dispatch:
   schedule:
-    # 06:00 IST daily (00:30 UTC). Manual dispatch remains available.
-    - cron: '30 0 * * *'
+    # 11:00 PM IST daily. GitHub supports timezone-aware schedules.
+    - cron: '0 23 * * *'
+      timezone: 'Asia/Kolkata'
 
 concurrency:
   group: astropratidin-v21-final-production
@@ -104,12 +105,12 @@ jobs:
           print('PRODUCTION HOOK WIRING: PASS')
           PY
 
-      - name: Compile
+      - name: Compile production and transit modules
         run: |
-          python -m py_compile video_engine/render_sync.py video_engine/visual_profiles.py video_engine/premium_entry.py video_engine/premium_entry_v21_1.py astro_engine/main.py astro_engine/rules.py content_engine/script.py
-          python -m py_compile scripts/build_daily_youtube_videos.py scripts/publish_youtube_daily.py scripts/publish_facebook_daily.py
+          python -m py_compile video_engine/render_sync.py video_engine/visual_profiles.py video_engine/premium_entry.py video_engine/premium_entry_v21_1.py astro_engine/main.py astro_engine/rules.py astro_engine/detector.py astro_engine/future_transits.py content_engine/script.py
+          python -m py_compile scripts/build_daily_youtube_videos.py scripts/build_transit_videos.py scripts/publish_youtube_daily.py scripts/publish_facebook_daily.py
 
-      - name: Generate daily content
+      - name: Generate next-day content and future transit schedule
         run: python -m astro_engine.main
 
       - name: Validate Hindi content before render
@@ -227,7 +228,30 @@ jobs:
               if st.get('pix_fmt')!='yuv420p': raise SystemExit(f'Bad pixel format: {p.name}')
           print('12 INDIVIDUAL RASHI VIDEOS: PASS')
 
-      - name: Upload 1 combined + 12 Rashi videos to YouTube
+      - name: Build seven-day major transit videos
+        run: python scripts/build_transit_videos.py
+
+      - name: Verify seven-day transit videos
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json, subprocess
+          out=Path('output')
+          manifest=out/'transit_video_manifest.json'
+          if not manifest.exists(): raise SystemExit('transit_video_manifest.json missing')
+          data=json.loads(manifest.read_text(encoding='utf-8'))
+          events=data.get('events',[])
+          for event in events:
+              p=Path(event['video_path'])
+              if not p.exists(): raise SystemExit(f'Missing transit video: {p}')
+              raw=subprocess.check_output(['ffprobe','-v','error','-select_streams','v:0','-show_entries','stream=width,height,pix_fmt,sample_aspect_ratio','-of','json',str(p)],text=True)
+              st=json.loads(raw)['streams'][0]
+              if (st.get('width'),st.get('height'))!=(1080,1920): raise SystemExit(f'Bad transit dimensions: {p.name}')
+              if st.get('sample_aspect_ratio')!='1:1': raise SystemExit(f'Bad transit SAR: {p.name}')
+              if st.get('pix_fmt')!='yuv420p': raise SystemExit(f'Bad transit pixel format: {p.name}')
+          print(f'SEVEN-DAY TRANSIT VIDEO QA: PASS — {len(events)} alert(s)')
+
+      - name: Upload daily + transit videos to YouTube
         env:
           YOUTUBE_TOKEN_JSON: ${{ secrets.ASTROPRATIDIN_YOUTUBE_TOKEN_JSON }}
         run: |
@@ -236,7 +260,7 @@ jobs:
           python -m pip install --disable-pip-version-check google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2
           python scripts/publish_youtube_daily.py
 
-      - name: Upload 1 combined + 12 Rashi videos to Facebook Page
+      - name: Upload daily + transit videos to Facebook Page
         env:
           FB_PAGE_ID: ${{ secrets.META_PAGE_ID }}
           FB_PAGE_ACCESS_TOKEN: ${{ secrets.META_PAGE_ACCESS_TOKEN }}
