@@ -1,9 +1,4 @@
-"""Publish the daily AstroPratidin video set to a Facebook Page.
-
-Publishes exactly 13 videos: 1 combined 12-Rashi video + 12 individual
-Rashi videos. Uses Meta Graph API v25.0 Page video publishing. The Page
-access token is read only from the GitHub Actions secret environment.
-"""
+"""Publish AstroPratidin daily videos and scheduled major-transit alerts."""
 from pathlib import Path
 import datetime as dt
 import json
@@ -18,7 +13,6 @@ UPLOADS = OUT / "youtube_uploads"
 API_VERSION = os.environ.get("FB_API_VERSION", "v25.0")
 GRAPH_VIDEO = f"https://graph-video.facebook.com/{API_VERSION}"
 GRAPH = f"https://graph.facebook.com/{API_VERSION}"
-
 RASHIS = [
     (1, "मेष", "मेष राशि"), (2, "वृषभ", "वृषभ राशि"),
     (3, "मिथुन", "मिथुन राशि"), (4, "कर्क", "कर्क राशि"),
@@ -37,7 +31,6 @@ def require_env(name):
 
 
 def upload_video(page_id, token, path, title, description):
-    """Upload a local MP4 to the Page using the Page Videos endpoint."""
     url = f"{GRAPH_VIDEO}/{page_id}/videos"
     command = [
         "curl", "--fail-with-body", "--silent", "--show-error", "--location",
@@ -85,10 +78,17 @@ def verify_video(token, video_id, timeout_seconds=900):
     raise RuntimeError(f"Facebook processing verification timed out for {video_id}: {last}")
 
 
+def publication_date():
+    path = OUT / "publication_date.txt"
+    if not path.exists():
+        raise SystemExit("publication_date.txt missing")
+    return path.read_text(encoding="utf-8").strip()
+
+
 def main():
     page_id = require_env("FB_PAGE_ID")
     token = require_env("FB_PAGE_ACCESS_TOKEN")
-    today = dt.date.today().isoformat()
+    target_date = publication_date()
     script = (OUT / "daily_script.md").read_text(encoding="utf-8")
 
     jobs = []
@@ -96,7 +96,7 @@ def main():
     if not combined.exists():
         raise SystemExit("Combined daily video missing")
     jobs.append(("combined", None, combined,
-                 f"आज का राशिफल | AstroPratidin | {today}",
+                 f"आज का राशिफल | AstroPratidin | {target_date}",
                  "AstroPratidin — आपका दैनिक ज्योतिष साथी।\n\n" + script +
                  "\n\n#AstroPratidin #दैनिकराशिफल #ज्योतिष #राशिफल"))
 
@@ -105,35 +105,38 @@ def main():
         if not path.exists():
             raise SystemExit(f"Individual Rashi video missing: {path}")
         jobs.append(("rashi", key, path,
-                     f"आज का {label} राशिफल | AstroPratidin | {today}",
-                     f"AstroPratidin — {label} के लिए आज का दैनिक राशिफल।\n\n"
-                     f"{key} राशि के ग्रह गोचर, संकेत और आज के महत्वपूर्ण ज्योतिषीय मार्गदर्शन के लिए यह वीडियो देखें।\n\n"
+                     f"आज का {label} राशिफल | AstroPratidin | {target_date}",
+                     f"AstroPratidin — {label} के लिए {target_date} का दैनिक राशिफल।\n\n"
+                     f"{key} राशि के ग्रह गोचर, संकेत और ज्योतिषीय मार्गदर्शन के लिए यह दैनिक वीडियो देखें।\n\n"
                      f"#AstroPratidin #{key}राशि #दैनिकराशिफल #ज्योतिष #राशिफल"))
 
-    results = []
-    print("FACEBOOK PUBLISH PLAN: 1 combined + 12 Rashi videos = 13 total")
-    for kind, rashi, path, title, description in jobs:
-        video_id = upload_video(page_id, token, path, title, description)
-        print(f"FACEBOOK UPLOADED {kind} {rashi or 'combined'}: {video_id}")
-        verify_video(token, video_id)
-        results.append({
-            "type": kind,
-            "rashi": rashi,
-            "video_id": video_id,
-            "url": f"https://www.facebook.com/{video_id}",
-        })
+    transit_manifest = OUT / "transit_video_manifest.json"
+    if transit_manifest.exists():
+        transit_data = json.loads(transit_manifest.read_text(encoding="utf-8"))
+        for event in transit_data.get("events", []):
+            path = Path(event["video_path"])
+            if not path.exists():
+                raise SystemExit(f"Transit video missing: {path}")
+            jobs.append(("transit", event["id"], path,
+                         f"7 दिन पहले: {event['description_hi']} | AstroPratidin",
+                         f"AstroPratidin प्रमुख ग्रह गोचर अलर्ट।\n\n{event['description_hi']}। यह गोचर {event['occurrence_ist']} के आसपास होगा।\n\nयह विशेष वीडियो गोचर से सात दिन पहले प्रकाशित किया गया है।\n\n#AstroPratidin #ग्रहगोचर #ज्योतिष #TransitAlert"))
 
-    if len(results) != 13:
-        raise SystemExit(f"Expected 13 Facebook videos, got {len(results)}")
+    results = []
+    print(f"FACEBOOK PUBLISH PLAN: {len(jobs)} total = 13 daily + {len(jobs)-13} transit alert(s)")
+    for kind, key, path, title, description in jobs:
+        video_id = upload_video(page_id, token, path, title, description)
+        print(f"FACEBOOK UPLOADED {kind} {key or 'combined'}: {video_id}")
+        verify_video(token, video_id)
+        results.append({"type": kind, "key": key, "video_id": video_id, "url": f"https://www.facebook.com/{video_id}"})
 
     manifest = OUT / "facebook_publish_manifest.json"
     manifest.write_text(json.dumps({
-        "date": today,
+        "date": target_date,
         "page_id": page_id,
         "api_version": API_VERSION,
         "videos": results,
     }, ensure_ascii=False, indent=2), encoding="utf-8")
-    print("FACEBOOK DAILY PUBLISH: PASS — 1 combined + 12 Rashi videos")
+    print(f"FACEBOOK PUBLISH: PASS — {len(results)} total videos")
 
 
 if __name__ == "__main__":
