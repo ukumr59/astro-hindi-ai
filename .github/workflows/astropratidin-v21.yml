@@ -238,13 +238,13 @@ jobs:
 
       - name: Upload 1 combined + 12 Rashi videos to Facebook Page
         env:
-          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
-          FB_PAGE_ACCESS_TOKEN: ${{ secrets.FB_PAGE_ACCESS_TOKEN }}
+          FB_PAGE_ID: ${{ secrets.META_PAGE_ID }}
+          FB_PAGE_ACCESS_TOKEN: ${{ secrets.META_PAGE_ACCESS_TOKEN }}
           FB_API_VERSION: v25.0
         run: |
           set -euo pipefail
-          test -n "$FB_PAGE_ID" || { echo 'Missing FB_PAGE_ID repository secret'; exit 1; }
-          test -n "$FB_PAGE_ACCESS_TOKEN" || { echo 'Missing FB_PAGE_ACCESS_TOKEN repository secret'; exit 1; }
+          test -n "$FB_PAGE_ID" || { echo 'Missing META_PAGE_ID repository secret'; exit 1; }
+          test -n "$FB_PAGE_ACCESS_TOKEN" || { echo 'Missing META_PAGE_ACCESS_TOKEN repository secret'; exit 1; }
           python scripts/publish_facebook_daily.py
 
       - name: Package production artifact
