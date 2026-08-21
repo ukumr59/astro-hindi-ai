@@ -15,11 +15,12 @@ permissions:
 
 env:
   YOUTUBE_TOKEN_SECRET: ASTROPRATIDIN_YOUTUBE_TOKEN_JSON
+  FB_API_VERSION: v25.0
 
 jobs:
   production:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - name: Checkout V21.9.5 branch
         uses: actions/checkout@v4
@@ -106,7 +107,7 @@ jobs:
       - name: Compile
         run: |
           python -m py_compile video_engine/render_sync.py video_engine/visual_profiles.py video_engine/premium_entry.py video_engine/premium_entry_v21_1.py astro_engine/main.py astro_engine/rules.py content_engine/script.py
-          python -m py_compile scripts/build_daily_youtube_videos.py scripts/publish_youtube_daily.py
+          python -m py_compile scripts/build_daily_youtube_videos.py scripts/publish_youtube_daily.py scripts/publish_facebook_daily.py
 
       - name: Generate daily content
         run: python -m astro_engine.main
@@ -122,7 +123,7 @@ jobs:
           if not text: raise SystemExit('daily_script.md is empty')
           rashis=['मेष','वृषभ','मिथुन','कर्क','सिंह','कन्या','तुला','वृश्चिक','धनु','मकर','कुंभ','मीन']
           lines=[x.strip() for x in text.splitlines() if x.strip()]
-          counts={r:sum(bool(re.match(rf'^{re.escape(r)} राशि(?:[।:]|\\s)',x)) for x in lines) for r in rashis}
+          counts={r:sum(bool(re.match(rf'^{re.escape(r)} राशि(?:[।:]|\s)',x)) for x in lines) for r in rashis}
           bad=[r for r,n in counts.items() if n!=1]
           if bad: raise SystemExit(f'Rashi heading coverage invalid: {bad}')
           for token in ['...','…','□','�','विस्तृत फलादेश आवाज़ में सुनें','विस्तृत फलादेश आपकी आवाज़ में']:
@@ -130,7 +131,7 @@ jobs:
           starts=[]
           for i,line in enumerate(lines):
               for r in rashis:
-                  if re.match(rf'^{re.escape(r)} राशि(?:[।:]|\\s)',line): starts.append((i,r))
+                  if re.match(rf'^{re.escape(r)} राशि(?:[।:]|\s)',line): starts.append((i,r))
           starts.sort()
           if [r for _,r in starts]!=rashis: raise SystemExit('Rashi narration is not in canonical order')
           for i,(pos,r) in enumerate(starts):
@@ -210,8 +211,21 @@ jobs:
       - name: Build 12 individual Rashi videos
         run: python scripts/build_daily_youtube_videos.py
 
-      - name: Package production artifact
-        run: zip -qr daily-astro-output-v21.9.5-premium.zip output
+      - name: Verify 12 individual videos
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import subprocess, json
+          out=Path('output/youtube_uploads')
+          files=sorted(out.glob('*.mp4'))
+          if len(files)!=12: raise SystemExit(f'Expected 12 individual Rashi videos, got {len(files)}')
+          for p in files:
+              raw=subprocess.check_output(['ffprobe','-v','error','-select_streams','v:0','-show_entries','stream=width,height,pix_fmt,sample_aspect_ratio','-of','json',str(p)],text=True)
+              st=json.loads(raw)['streams'][0]
+              if (st.get('width'),st.get('height'))!=(1080,1920): raise SystemExit(f'Bad dimensions: {p.name}')
+              if st.get('sample_aspect_ratio')!='1:1': raise SystemExit(f'Bad SAR: {p.name}')
+              if st.get('pix_fmt')!='yuv420p': raise SystemExit(f'Bad pixel format: {p.name}')
+          print('12 INDIVIDUAL RASHI VIDEOS: PASS')
 
       - name: Upload 1 combined + 12 Rashi videos to YouTube
         env:
@@ -221,6 +235,20 @@ jobs:
           test -n "$YOUTUBE_TOKEN_JSON" || { echo 'Missing ASTROPRATIDIN_YOUTUBE_TOKEN_JSON repository secret'; exit 1; }
           python -m pip install --disable-pip-version-check google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2
           python scripts/publish_youtube_daily.py
+
+      - name: Upload 1 combined + 12 Rashi videos to Facebook Page
+        env:
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          FB_PAGE_ACCESS_TOKEN: ${{ secrets.FB_PAGE_ACCESS_TOKEN }}
+          FB_API_VERSION: v25.0
+        run: |
+          set -euo pipefail
+          test -n "$FB_PAGE_ID" || { echo 'Missing FB_PAGE_ID repository secret'; exit 1; }
+          test -n "$FB_PAGE_ACCESS_TOKEN" || { echo 'Missing FB_PAGE_ACCESS_TOKEN repository secret'; exit 1; }
+          python scripts/publish_facebook_daily.py
+
+      - name: Package production artifact
+        run: zip -qr daily-astro-output-v21.9.5-premium.zip output
 
       - name: Upload production artifact
         if: always()
