@@ -132,3 +132,7 @@ def main():
     manifest = OUT / "youtube_publish_manifest.json"
     manifest.write_text(json.dumps({"date": target_date, "videos": results}, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"YOUTUBE PUBLISH: PASS — {len(results)} total videos")
+
+
+if __name__ == "__main__":
+    main()
