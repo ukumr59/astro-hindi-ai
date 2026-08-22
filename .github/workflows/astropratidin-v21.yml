@@ -8,10 +8,6 @@ on:
         required: false
         type: string
         default: ""
-  # One-shot trigger for tonight's 22-August backfill. Ordinary pushes are
-  # ignored by the job condition below.
-  push:
-    branches: [main]
   schedule:
     # 11:00 PM IST = 17:30 UTC
     - cron: '30 17 * * *'
@@ -24,11 +20,10 @@ permissions:
   contents: read
 
 env:
-  TARGET_DATE_IST: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[ASTRO-BACKFILL]') && '2026-08-22' || github.event.inputs.target_date_ist || '' }}
+  TARGET_DATE_IST: ${{ github.event.inputs.target_date_ist || '' }}
 
 jobs:
   production:
-    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[ASTRO-BACKFILL]')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
