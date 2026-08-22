@@ -41,7 +41,12 @@ jobs:
         run: |
           for n in 1 2; do python -m video_engine.premium_entry_v21_1 && exit 0; [ "$n" = 2 ] && exit 1; sleep 30; done
       - name: Validate main video
-        run: test -s output/daily_video.mp4 && test -s output/daily_script.md && test -s output/publication_date.txt && ffprobe -v error output/daily_video.mp4
+        run: |
+          test -s output/daily_video.mp4
+          test -s output/daily_script.md
+          test -s output/publication_date.txt
+          ffprobe -v error -show_streams -show_format output/daily_video.mp4
+          ffmpeg -v error -xerror -i output/daily_video.mp4 -map 0:v:0 -f null -
       - name: Build 12 Rashi videos with automatic retry
         run: |
           for n in 1 2; do
@@ -52,6 +57,47 @@ jobs:
           done
       - name: Build seven-day transit videos
         run: python scripts/build_transit_videos.py
+      - name: Validate every file planned for publication
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          files=[Path('output/daily_video.mp4')]
+          files += sorted(Path('output/youtube_uploads').glob('*.mp4'))
+          manifest=Path('output/transit_video_manifest.json')
+          if manifest.exists():
+              files += [Path(x['video_path']) for x in json.loads(manifest.read_text(encoding='utf-8')).get('events',[])]
+          if len(files) < 13:
+              raise SystemExit(f'Expected at least 13 publication videos, found {len(files)}')
+          for p in files:
+              if not p.is_file() or p.stat().st_size < 10240:
+                  raise SystemExit(f'Invalid publication file: {p}')
+              print(p)
+          Path('/tmp/astro_publish_files.txt').write_text('\n'.join(str(p) for p in files))
+          PY
+          while IFS= read -r f; do
+            echo "DEEP DECODE CHECK: $f"
+            ffprobe -v error -show_streams -show_format "$f" >/dev/null
+            ffmpeg -v error -xerror -i "$f" -map 0:v:0 -f null -
+          done < /tmp/astro_publish_files.txt
+      - name: Normalize all publication videos for platform compatibility
+        run: |
+          while IFS= read -r f; do
+            tmp="${f}.normalized.mp4"
+            echo "NORMALIZING: $f"
+            ffmpeg -v error -xerror -y -i "$f" -map 0:v:0 -map 0:a? -c:v libx264 -pix_fmt yuv420p -movflags +faststart -c:a aac -b:a 128k "$tmp"
+            test -s "$tmp"
+            ffprobe -v error -show_streams -show_format "$tmp" >/dev/null
+            ffmpeg -v error -xerror -i "$tmp" -map 0:v:0 -f null -
+            mv "$tmp" "$f"
+          done < /tmp/astro_publish_files.txt
+      - name: Final post-normalization media gate
+        run: |
+          while IFS= read -r f; do
+            echo "FINAL MEDIA PASS: $f"
+            ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height -of default=noprint_wrappers=1 "$f"
+            ffmpeg -v error -xerror -i "$f" -map 0:v:0 -f null -
+          done < /tmp/astro_publish_files.txt
       - name: Publish to YouTube
         env:
           YOUTUBE_TOKEN_JSON: ${{ secrets.ASTROPRATIDIN_YOUTUBE_TOKEN_JSON }}
