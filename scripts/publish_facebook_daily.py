@@ -11,13 +11,14 @@ OUT = Path("output")
 UPLOADS = OUT / "youtube_uploads"
 API_VERSION = os.environ.get("FB_API_VERSION", "v25.0")
 GRAPH_VIDEO = f"https://graph-video.facebook.com/{API_VERSION}"
+GRAPH_API = f"https://graph.facebook.com/{API_VERSION}"
 RASHIS = [
     (1, "मेष", "मेष राशि"), (2, "वृषभ", "वृषभ राशि"),
     (3, "मिथुन", "मिथुन राशि"), (4, "कर्क", "कर्क राशि"),
-    (5, "सिंह", "सिंह राशि"), (6, "कन्या", "कन्या राशि"),
-    (7, "तुला", "तुला राशि"), (8, "वृश्चिक", "वृश्चिक राशि"),
-    (9, "धनु", "धनु राशि"), (10, "मकर", "मकर राशि"),
-    (11, "कुंभ", "कुंभ राशि"), (12, "मीन", "मीन राशि"),
+    (5, "सिंह", "सिंह राशि"),
+    (6, "कन्या", "कन्या राशि"), (7, "तुला", "तुला राशि"),
+    (8, "वृश्चिक", "वृश्चिक राशि"), (9, "धनु", "धनु राशि"),
+    (10, "मकर", "मकर राशि"), (11, "कुंभ", "कुंभ राशि"), (12, "मीन", "मीन राशि"),
 ]
 
 
@@ -26,6 +27,27 @@ def require_env(name):
     if not value:
         raise SystemExit(f"Missing required GitHub Actions secret/environment variable: {name}")
     return value
+
+
+def resolve_page_id(token):
+    """Use configured page id, or derive it from a Page access token."""
+    configured = os.environ.get("FB_PAGE_ID", "").strip()
+    if configured:
+        return configured
+    url = f"{GRAPH_API}/me?fields=id&access_token={urllib.parse.quote(token, safe='')}"
+    try:
+        with urllib.request.urlopen(url, timeout=30) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        raise SystemExit(
+            "FB_PAGE_ID is missing and the Facebook Page ID could not be derived from FB_PAGE_ACCESS_TOKEN: "
+            f"{exc}"
+        ) from exc
+    page_id = str(data.get("id", "")).strip()
+    if not page_id:
+        raise SystemExit(f"FB_PAGE_ID is missing and Facebook /me returned no page id: {data}")
+    print("FACEBOOK PAGE ID: resolved automatically from access token")
+    return page_id
 
 
 def upload_once(page_id, token, path, title, description):
@@ -77,8 +99,8 @@ def publication_date():
 
 
 def main():
-    page_id = require_env("FB_PAGE_ID")
     token = require_env("FB_PAGE_ACCESS_TOKEN")
+    page_id = resolve_page_id(token)
     target_date = publication_date()
     script = (OUT / "daily_script.md").read_text(encoding="utf-8")
     jobs = []
@@ -88,7 +110,7 @@ def main():
         raise SystemExit("Combined daily video missing")
     jobs.append(("combined", None, combined,
                  f"आज का राशिफल | AstroPratidin | {target_date}",
-                 "AstroPratidin — आपका दैनिक ज्योतिष साथी।\n\n" + script + "\n\n#AstroPratidin #दैनिकराशिफल #ज्योतिष #राशिफल"))
+                 "AstroPratidin — आपका दैनिक ज्योतिष साथी。\n\n" + script + "\n\n#AstroPratidin #दैनिकराशिफल #ज्योतिष #राशिफल"))
 
     for index, key, label in RASHIS:
         path = UPLOADS / f"{index:02d}_{key}.mp4"
