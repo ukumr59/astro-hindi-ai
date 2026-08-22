@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 import json
+import os
 
 from .ephemeris import RealEphemeris
 from .detector import detect_sign_changes
@@ -42,7 +43,20 @@ def build_report(positions, events, target_date):
 
 def run():
     run_time_ist = datetime.now(IST)
-    target_date = run_time_ist.date() + timedelta(days=1)
+
+    # Normal scheduled runs publish tomorrow. Backfill/manual runs can set
+    # TARGET_DATE_IST=YYYY-MM-DD without changing the normal schedule.
+    requested_date = os.environ.get("TARGET_DATE_IST", "").strip()
+    if requested_date:
+        try:
+            target_date = datetime.strptime(requested_date, "%Y-%m-%d").date()
+        except ValueError as exc:
+            raise SystemExit("TARGET_DATE_IST must be YYYY-MM-DD") from exc
+        print(f"EXPLICIT PUBLICATION DATE: {target_date.isoformat()}")
+    else:
+        target_date = run_time_ist.date() + timedelta(days=1)
+        print(f"NEXT-DAY PUBLICATION DATE: {target_date.isoformat()}")
+
     target_noon = datetime.combine(target_date, datetime.min.time(), tzinfo=IST).replace(hour=12)
     previous_noon = target_noon - timedelta(days=1)
 
@@ -58,9 +72,6 @@ def run():
     script = build_daily_script(target_noon, current_positions, events)
     (OUT / "daily_script.md").write_text(script, encoding="utf-8")
 
-    # Identify all major sign-entry transits in the next seven days. Each
-    # event gets one dedicated advance video on the calendar date exactly
-    # seven days before its occurrence.
     future = find_major_transits(run_time_ist, days=7)
     (OUT / "future_transits.json").write_text(json.dumps({
         "generated_at_ist": run_time_ist.isoformat(),
@@ -69,10 +80,10 @@ def run():
         "events": future,
     }, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    publish_today = run_time_ist.date().isoformat()
-    lead_events = [e for e in future if e["publish_on_ist"] == publish_today]
+    publish_date_ist = target_date.isoformat()
+    lead_events = [e for e in future if e["publish_on_ist"] == publish_date_ist]
     (OUT / "transit_publish_queue.json").write_text(json.dumps({
-        "publish_date_ist": publish_today,
+        "publish_date_ist": publish_date_ist,
         "lead_days": 7,
         "events": lead_events,
     }, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -82,9 +93,9 @@ def run():
     print("=" * 70)
     print(report)
     print("=" * 70)
-    print(f"Generated next-day content for: {target_date.isoformat()}")
+    print(f"Generated publication content for: {target_date.isoformat()}")
     print(f"Generated future transit schedule: output/future_transits.json")
-    print(f"Seven-day advance transit videos due tonight: {len(lead_events)}")
+    print(f"Seven-day advance transit videos due for publication date: {len(lead_events)}")
     for event in lead_events:
         print(f"TRANSIT ALERT: {event['description_hi']} on {event['occurrence_ist']}")
     print(f"Generated: output/planetary_report.txt")
