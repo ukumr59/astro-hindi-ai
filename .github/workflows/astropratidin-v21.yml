@@ -2,6 +2,12 @@ name: AstroPratidin Automated Production
 
 on:
   workflow_dispatch:
+    inputs:
+      target_date_ist:
+        description: "Publication date to generate (YYYY-MM-DD). Leave blank for normal next-day production."
+        required: false
+        type: string
+        default: ""
   schedule:
     # 11:00 PM IST = 17:30 UTC
     - cron: '30 17 * * *'
@@ -36,6 +42,8 @@ jobs:
       - name: Compile
         run: python -m py_compile video_engine/premium_entry_v21_1.py astro_engine/main.py scripts/build_daily_youtube_videos.py scripts/publish_youtube_daily.py scripts/publish_facebook_daily.py
       - name: Generate daily content
+        env:
+          TARGET_DATE_IST: ${{ github.event.inputs.target_date_ist || '' }}
         run: python -m astro_engine.main
       - name: Render with automatic retry
         run: |
