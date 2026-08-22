@@ -43,7 +43,7 @@ jobs:
           pip install -r requirements.txt
           pip install --disable-pip-version-check google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2
       - name: Compile
-        run: python -m py_compile video_engine/premium_entry_v21_1.py astro_engine/main.py scripts/build_daily_youtube_videos.py scripts/publish_youtube_daily.py scripts/publish_facebook_daily.py
+        run: python -m py_compile video_engine/premium_entry_v21_1.py astro_engine/main.py scripts/build_daily_youtube_videos.py scripts/publish_youtube_daily.py scripts/publish_facebook_daily.py scripts/build_transit_videos.py
       - name: Generate daily content
         run: python -m astro_engine.main
       - name: Render with automatic retry
@@ -70,43 +70,61 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-          import json
+          import json, subprocess
           files=[Path('output/daily_video.mp4')]
           files += sorted(Path('output/youtube_uploads').glob('*.mp4'))
           manifest=Path('output/transit_video_manifest.json')
           if manifest.exists():
-              files += [Path(x['video_path']) for x in json.loads(manifest.read_text(encoding='utf-8')).get('events',[])]
+              for item in json.loads(manifest.read_text(encoding='utf-8')).get('events',[]):
+                  raw=str(item['video_path']).strip()
+                  p=Path(raw)
+                  if not p.is_absolute():
+                      p=Path.cwd()/p
+                  files.append(p)
           if len(files) < 13:
               raise SystemExit(f'Expected at least 13 publication videos, found {len(files)}')
+          seen=set()
           for p in files:
+              p=p.resolve()
+              if str(p) in seen:
+                  continue
+              seen.add(str(p))
               if not p.is_file() or p.stat().st_size < 10240:
                   raise SystemExit(f'Invalid publication file: {p}')
-              print(p)
-          Path('/tmp/astro_publish_files.txt').write_text('\n'.join(str(p) for p in files))
+              print(f'DEEP DECODE CHECK: {p}')
+              subprocess.run(['ffprobe','-v','error','-show_streams','-show_format',str(p)],check=True,stdout=subprocess.DEVNULL)
+              subprocess.run(['ffmpeg','-v','error','-xerror','-i',str(p),'-map','0:v:0','-f','null','-'],check=True)
+          Path('/tmp/astro_publish_files.json').write_text(json.dumps([str(Path(x).resolve()) for x in files],ensure_ascii=False),encoding='utf-8')
+          print(f'PUBLICATION MEDIA GATE: PASS ({len(files)} files)')
           PY
-          while IFS= read -r f; do
-            echo "DEEP DECODE CHECK: $f"
-            ffprobe -v error -show_streams -show_format "$f" >/dev/null
-            ffmpeg -v error -xerror -i "$f" -map 0:v:0 -f null -
-          done < /tmp/astro_publish_files.txt
       - name: Normalize all publication videos for platform compatibility
         run: |
-          while IFS= read -r f; do
-            tmp="${f}.normalized.mp4"
-            echo "NORMALIZING: $f"
-            ffmpeg -v error -xerror -y -i "$f" -map 0:v:0 -map 0:a? -c:v libx264 -pix_fmt yuv420p -movflags +faststart -c:a aac -b:a 128k "$tmp"
-            test -s "$tmp"
-            ffprobe -v error -show_streams -show_format "$tmp" >/dev/null
-            ffmpeg -v error -xerror -i "$tmp" -map 0:v:0 -f null -
-            mv "$tmp" "$f"
-          done < /tmp/astro_publish_files.txt
+          python - <<'PY'
+          from pathlib import Path
+          import json, subprocess
+          files=[Path(x) for x in json.loads(Path('/tmp/astro_publish_files.json').read_text(encoding='utf-8'))]
+          for f in files:
+              tmp=f.with_name(f.stem+'.normalized.mp4')
+              print(f'NORMALIZING: {f}')
+              subprocess.run(['ffmpeg','-v','error','-xerror','-y','-i',str(f),'-map','0:v:0','-map','0:a?','-c:v','libx264','-pix_fmt','yuv420p','-movflags','+faststart','-c:a','aac','-b:a','128k',str(tmp)],check=True)
+              if not tmp.is_file() or tmp.stat().st_size < 10240:
+                  raise SystemExit(f'Normalization failed: {tmp}')
+              subprocess.run(['ffprobe','-v','error','-show_streams','-show_format',str(tmp)],check=True,stdout=subprocess.DEVNULL)
+              subprocess.run(['ffmpeg','-v','error','-xerror','-i',str(tmp),'-map','0:v:0','-f','null','-'],check=True)
+              tmp.replace(f)
+          PY
       - name: Final post-normalization media gate
         run: |
-          while IFS= read -r f; do
-            echo "FINAL MEDIA PASS: $f"
-            ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height -of default=noprint_wrappers=1 "$f"
-            ffmpeg -v error -xerror -i "$f" -map 0:v:0 -f null -
-          done < /tmp/astro_publish_files.txt
+          python - <<'PY'
+          from pathlib import Path
+          import json, subprocess
+          files=[Path(x) for x in json.loads(Path('/tmp/astro_publish_files.json').read_text(encoding='utf-8'))]
+          for f in files:
+              print(f'FINAL MEDIA PASS: {f}')
+              subprocess.run(['ffprobe','-v','error','-select_streams','v:0','-show_entries','stream=codec_name,width,height','-of','default=noprint_wrappers=1',str(f)],check=True)
+              subprocess.run(['ffmpeg','-v','error','-xerror','-i',str(f),'-map','0:v:0','-f','null','-'],check=True)
+          print(f'FINAL MEDIA GATE: PASS ({len(files)} files)')
+          PY
       - name: Publish to YouTube
         env:
           YOUTUBE_TOKEN_JSON: ${{ secrets.ASTROPRATIDIN_YOUTUBE_TOKEN_JSON }}
