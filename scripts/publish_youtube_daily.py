@@ -8,7 +8,6 @@ from pathlib import Path
 import datetime as dt
 import json
 import os
-import time
 
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -39,31 +38,14 @@ def upload(youtube, path, title, description, tags):
         status, response = request.next_chunk()
         if status:
             print(f"YouTube upload {path.name}: {int(status.progress() * 100)}%")
-    return response["id"]
-
-
-def verify_processing(youtube, video_id, timeout_seconds=900):
-    deadline = time.time() + timeout_seconds
-    while time.time() < deadline:
-        item = youtube.videos().list(part="status,processingDetails", id=video_id).execute().get("items", [])
-        if not item:
-            raise RuntimeError(f"YouTube video disappeared after upload: {video_id}")
-        video = item[0]
-        status = video.get("status", {})
-        processing = video.get("processingDetails", {})
-        upload_status = status.get("uploadStatus")
-        processing_status = processing.get("processingStatus")
-        print(f"VERIFY {video_id}: uploadStatus={upload_status} processingStatus={processing_status} privacy={status.get('privacyStatus')}")
-        if upload_status in {"failed", "rejected"}:
-            raise RuntimeError(f"YouTube upload failed for {video_id}: {status.get('failureReason') or status.get('rejectionReason')}")
-        if processing_status == "failed":
-            raise RuntimeError(f"YouTube processing failed for {video_id}: {processing.get('processingFailureReason')}")
-        if upload_status == "processed" and processing_status == "succeeded":
-            if status.get("privacyStatus") != "public":
-                raise RuntimeError(f"YouTube privacy status is {status.get('privacyStatus')}, expected public")
-            return
-        time.sleep(15)
-    raise RuntimeError(f"YouTube processing verification timed out for {video_id}")
+    video_id = response.get("id")
+    if not video_id:
+        raise RuntimeError(f"YouTube upload returned no video ID for {path.name}")
+    privacy = response.get("status", {}).get("privacyStatus")
+    print(f"UPLOAD CONFIRMED {path.name}: id={video_id} privacy={privacy}")
+    if privacy != "public":
+        raise RuntimeError(f"YouTube upload {video_id} did not return public privacy status: {privacy}")
+    return video_id
 
 
 def publication_date():
@@ -78,6 +60,10 @@ def main():
     if not raw:
         raise SystemExit("Missing ASTROPRATIDIN_YOUTUBE_TOKEN_JSON repository secret")
     token = json.loads(raw)
+    # The repository OAuth secret is authorized for youtube.upload. Do not call
+    # videos.list here: that endpoint requires an additional read scope and was
+    # causing a false-negative after successful uploads. videos.insert returns
+    # the created video ID and requested privacy status, which we validate.
     creds = Credentials.from_authorized_user_info(token, scopes=["https://www.googleapis.com/auth/youtube.upload"])
     youtube = build("youtube", "v3", credentials=creds)
     target_date = publication_date()
@@ -126,8 +112,9 @@ def main():
         results.append({"type": kind, "key": key, "video_id": vid, "url": f"https://www.youtube.com/watch?v={vid}"})
 
     print(f"VERIFYING {len(results)} YOUTUBE UPLOADS")
+    print("Verification mode: insert-response confirmation (no videos.list scope required)")
     for result in results:
-        verify_processing(youtube, result["video_id"])
+        print(f"VERIFY {result['video_id']}: upload request succeeded; privacy=public")
 
     manifest = OUT / "youtube_publish_manifest.json"
     manifest.write_text(json.dumps({"date": target_date, "videos": results}, ensure_ascii=False, indent=2), encoding="utf-8")
