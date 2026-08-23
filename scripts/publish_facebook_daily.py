@@ -15,10 +15,10 @@ GRAPH_API = f"https://graph.facebook.com/{API_VERSION}"
 RASHIS = [
     (1, "मेष", "मेष राशि"), (2, "वृषभ", "वृषभ राशि"),
     (3, "मिथुन", "मिथुन राशि"), (4, "कर्क", "कर्क राशि"),
-    (5, "सिंह", "सिंह राशि"),
-    (6, "कन्या", "कन्या राशि"), (7, "तुला", "तुला राशि"),
-    (8, "वृश्चिक", "वृश्चिक राशि"), (9, "धनु", "धनु राशि"),
-    (10, "मकर", "मकर राशि"), (11, "कुंभ", "कुंभ राशि"), (12, "मीन", "मीन राशि"),
+    (5, "सिंह", "सिंह राशि"), (6, "कन्या", "कन्या राशि"),
+    (7, "तुला", "तुला राशि"), (8, "वृश्चिक", "वृश्चिक राशि"),
+    (9, "धनु", "धनु राशि"), (10, "मकर", "मकर राशि"),
+    (11, "कुंभ", "कुंभ राशि"), (12, "मीन", "मीन राशि"),
 ]
 
 
@@ -30,7 +30,6 @@ def require_env(name):
 
 
 def resolve_page_id(token):
-    """Use configured page id, or derive it from a Page access token."""
     configured = os.environ.get("FB_PAGE_ID", "").strip()
     if configured:
         return configured
@@ -40,12 +39,12 @@ def resolve_page_id(token):
             data = json.loads(response.read().decode("utf-8"))
     except Exception as exc:
         raise SystemExit(
-            "FB_PAGE_ID is missing and the Facebook Page ID could not be derived from FB_PAGE_ACCESS_TOKEN: "
+            "FB_PAGE_ID is unavailable and the Facebook Page ID could not be derived from FB_PAGE_ACCESS_TOKEN: "
             f"{exc}"
         ) from exc
     page_id = str(data.get("id", "")).strip()
     if not page_id:
-        raise SystemExit(f"FB_PAGE_ID is missing and Facebook /me returned no page id: {data}")
+        raise SystemExit(f"Facebook /me returned no page id: {data}")
     print("FACEBOOK PAGE ID: resolved automatically from access token")
     return page_id
 
@@ -59,6 +58,7 @@ def upload_once(page_id, token, path, title, description):
         "--form", f"source=@{path}",
         "--form", f"title={title}",
         "--form", f"description={description}",
+        "--form", "published=true",
         "--form", f"access_token={token}",
     ]
     result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -74,13 +74,33 @@ def upload_once(page_id, token, path, title, description):
     return video_id
 
 
+def verify_discoverable(video_id, token, attempts=12):
+    url = f"{GRAPH_API}/{video_id}?fields=id,permalink_url&access_token={urllib.parse.quote(token, safe='')}"
+    last = None
+    for attempt in range(1, attempts + 1):
+        try:
+            with urllib.request.urlopen(url, timeout=30) as response:
+                data = json.loads(response.read().decode("utf-8"))
+            permalink = str(data.get("permalink_url", "")).strip()
+            if permalink:
+                print(f"FACEBOOK DISCOVERABILITY PASS attempt={attempt} id={video_id}")
+                return permalink
+            last = f"No permalink_url returned: {data}"
+        except Exception as exc:
+            last = str(exc)
+        if attempt < attempts:
+            time.sleep(10)
+    raise RuntimeError(f"Facebook video {video_id} was uploaded but did not become discoverable: {last}")
+
+
 def upload_video(page_id, token, path, title, description, attempts=3):
     last = None
     for attempt in range(1, attempts + 1):
         try:
             video_id = upload_once(page_id, token, path, title, description)
+            permalink = verify_discoverable(video_id, token)
             print(f"FACEBOOK UPLOAD SUCCESS attempt={attempt} file={path.name} id={video_id}")
-            return video_id
+            return video_id, permalink
         except Exception as exc:
             last = exc
             if attempt == attempts:
@@ -134,12 +154,12 @@ def main():
     results = []
     print(f"FACEBOOK PUBLISH PLAN: {len(jobs)} total = 13 daily + {len(jobs)-13} transit alert(s)")
     for kind, key, path, title, description in jobs:
-        video_id = upload_video(page_id, token, path, title, description)
-        results.append({"type": kind, "key": key, "video_id": video_id, "url": f"https://www.facebook.com/{video_id}"})
+        video_id, permalink = upload_video(page_id, token, path, title, description)
+        results.append({"type": kind, "key": key, "video_id": video_id, "url": permalink})
 
     manifest = OUT / "facebook_publish_manifest.json"
     manifest.write_text(json.dumps({"date": target_date, "page_id": page_id, "api_version": API_VERSION, "videos": results}, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"FACEBOOK PUBLISH: PASS — {len(results)} total videos")
+    print(f"FACEBOOK PUBLISH: PASS — {len(results)} total videos, all discoverability checks passed")
 
 
 if __name__ == "__main__":
