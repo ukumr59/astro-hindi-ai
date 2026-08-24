@@ -90,43 +90,132 @@ jobs:
             sleep 30
           done
 
+      # Publishing is deliberately moved into separate downstream jobs.
+      # A Facebook failure must NEVER cause an already-successful YouTube
+      # publication to be executed again when only failed jobs are rerun.
+      - name: Upload publication bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: astropratidin-publication-bundle
+          path: output
+          if-no-files-found: error
+          retention-days: 14
+
+  youtube_publish:
+    name: Publish to YouTube
+    needs: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout production branch
+        uses: actions/checkout@v4
+        with:
+          ref: v21-premium-9-5-architecture
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install YouTube dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --disable-pip-version-check google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2
+
+      - name: Download publication bundle
+        uses: actions/download-artifact@v5
+        with:
+          name: astropratidin-publication-bundle
+          path: output
+
       - name: Publish all videos to YouTube
         env:
           YOUTUBE_TOKEN_JSON: ${{ secrets.ASTROPRATIDIN_YOUTUBE_TOKEN_JSON }}
         run: python scripts/publish_youtube_daily.py
 
+      - name: Verify YouTube publication manifest
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          p=Path('output/youtube_publish_manifest.json')
+          if not p.exists(): raise SystemExit('Missing youtube_publish_manifest.json')
+          data=json.loads(p.read_text(encoding='utf-8'))
+          count=len(data.get('videos',[]))
+          if count < 13: raise SystemExit(f'youtube_publish_manifest.json has only {count} videos; expected at least 13')
+          print(f'youtube_publish_manifest.json: PASS ({count} videos)')
+          PY
+
+      - name: Upload YouTube publication result
+        uses: actions/upload-artifact@v4
+        with:
+          name: astropratidin-youtube-publication-result
+          path: output/youtube_publish_manifest.json
+          if-no-files-found: error
+          retention-days: 14
+
+  facebook_publish:
+    name: Publish to Facebook
+    needs: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout production branch
+        uses: actions/checkout@v4
+        with:
+          ref: v21-premium-9-5-architecture
+          fetch-depth: 1
+
+      - name: Download publication bundle
+        uses: actions/download-artifact@v5
+        with:
+          name: astropratidin-publication-bundle
+          path: output
+
       - name: Publish all videos to Facebook
         env:
-          # Restore the existing production secret names that were used by the previously successful Facebook publisher.
+          # Existing production Meta secret names.
           FB_PAGE_ID: ${{ secrets.META_PAGE_ID }}
           FB_PAGE_ACCESS_TOKEN: ${{ secrets.META_PAGE_ACCESS_TOKEN }}
           FB_API_VERSION: v25.0
         run: python scripts/publish_facebook_daily.py
 
-      - name: Verify publication manifests
+      - name: Verify Facebook publication manifest
         run: |
           python - <<'PY'
           from pathlib import Path
           import json
-          for name in ['youtube_publish_manifest.json','facebook_publish_manifest.json']:
-              p=Path('output')/name
-              if not p.exists(): raise SystemExit(f'Missing {name}')
-              data=json.loads(p.read_text(encoding='utf-8'))
-              count=len(data.get('videos',[]))
-              if count < 13: raise SystemExit(f'{name} has only {count} videos; expected at least 13')
-              print(f'{name}: PASS ({count} videos)')
+          p=Path('output/facebook_publish_manifest.json')
+          if not p.exists(): raise SystemExit('Missing facebook_publish_manifest.json')
+          data=json.loads(p.read_text(encoding='utf-8'))
+          count=len(data.get('videos',[]))
+          if count < 13: raise SystemExit(f'facebook_publish_manifest.json has only {count} videos; expected at least 13')
+          print(f'facebook_publish_manifest.json: PASS ({count} videos)')
           PY
 
-      - name: Package production artifact
-        if: always()
-        run: |
-          if [ -d output ]; then zip -qr daily-astro-output-v21.9.5-premium.zip output; fi
-
-      - name: Upload production artifact
-        if: always()
+      - name: Upload Facebook publication result
         uses: actions/upload-artifact@v4
         with:
-          name: daily-astro-output-v21.9.5-premium
-          path: daily-astro-output-v21.9.5-premium.zip
-          if-no-files-found: warn
+          name: astropratidin-facebook-publication-result
+          path: output/facebook_publish_manifest.json
+          if-no-files-found: error
           retention-days: 14
+
+  publication_summary:
+    name: Publication Summary
+    if: always()
+    needs:
+      - youtube_publish
+      - facebook_publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report publication status
+        run: |
+          echo "YouTube job result: ${{ needs.youtube_publish.result }}"
+          echo "Facebook job result: ${{ needs.facebook_publish.result }}"
+          if [ "${{ needs.youtube_publish.result }}" != "success" ] || [ "${{ needs.facebook_publish.result }}" != "success" ]; then
+            echo "One or more publication channels failed. Re-run ONLY the failed job; successful channels will not be republished."
+            exit 1
+          fi
+          echo "ASTROPRATIDIN PUBLICATION: PASS — YouTube and Facebook both succeeded."
