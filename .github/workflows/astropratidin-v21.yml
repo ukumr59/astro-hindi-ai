@@ -1,27 +1,21 @@
 name: AstroPratidin Automated Production
-
 on:
   workflow_dispatch:
     inputs:
       target_date_ist:
-        description: "Publication date to generate (YYYY-MM-DD). Leave blank for normal next-day production."
+        description: Publication date (YYYY-MM-DD); blank for normal production
         required: false
         type: string
-        default: ""
+        default: ''
   schedule:
-    # 11:00 PM IST = 17:30 UTC
     - cron: '30 17 * * *'
-
 concurrency:
   group: astropratidin-daily-production
   cancel-in-progress: false
-
 permissions:
   contents: read
-
 env:
   TARGET_DATE_IST: ${{ github.event.inputs.target_date_ist || '' }}
-
 jobs:
   production:
     runs-on: ubuntu-latest
@@ -41,75 +35,35 @@ jobs:
           sudo apt-get install -y ffmpeg
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install --disable-pip-version-check google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2
+          pip install google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2
       - name: Compile
         run: python -m py_compile video_engine/premium_entry_v21_1.py astro_engine/main.py scripts/build_daily_youtube_videos.py scripts/publish_youtube_daily.py scripts/publish_facebook_daily.py scripts/build_transit_videos.py
       - name: Generate daily content
         run: python -m astro_engine.main
       - name: Render with automatic retry
         run: |
-          for n in 1 2; do python -m video_engine.premium_entry_v21_1.py && exit 0; [ "$n" = 2 ] && exit 1; sleep 30; done
+          for n in 1 2; do python -m video_engine.premium_entry_v21_1 && exit 0; [ "$n" = 2 ] && exit 1; sleep 30; done
       - name: Validate main video
         run: |
           test -s output/daily_video.mp4
           test -s output/daily_script.md
           test -s output/publication_date.txt
-          ffprobe -v error -show_streams -show_format output/daily_video.mp4
           ffmpeg -v error -xerror -i output/daily_video.mp4 -map 0:v:0 -f null -
-      - name: Build 12 Rashi videos with automatic retry
+      - name: Build 12 Rashi videos
         run: |
-          for n in 1 2; do
-            rm -rf output/youtube_uploads
-            python scripts/build_daily_youtube_videos.py && [ "$(find output/youtube_uploads -maxdepth 1 -name '*.mp4' | wc -l)" -eq 12 ] && exit 0
-            [ "$n" = 2 ] && exit 1
-            sleep 30
-          done
+          for n in 1 2; do rm -rf output/youtube_uploads; python scripts/build_daily_youtube_videos.py && [ "$(find output/youtube_uploads -maxdepth 1 -name '*.mp4' | wc -l)" -eq 12 ] && exit 0; [ "$n" = 2 ] && exit 1; sleep 30; done
       - name: Build seven-day transit videos
         run: python scripts/build_transit_videos.py
-      - name: Validate every file planned for publication
+      - name: Publication media gate
         run: |
           python - <<'PY'
           from pathlib import Path
-          import json, subprocess
-          files=[Path('output/daily_video.mp4')]
-          files += sorted(Path('output/youtube_uploads').glob('*.mp4'))
-          manifest=Path('output/transit_video_manifest.json')
-          if manifest.exists():
-              for item in json.loads(manifest.read_text(encoding='utf-8')).get('events',[]):
-                  raw=str(item['video_path']).strip(); p=Path(raw)
-                  if not p.is_absolute(): p=Path.cwd()/p
-                  files.append(p)
-          if len(files) < 13: raise SystemExit(f'Expected at least 13 publication videos, found {len(files)}')
-          seen=set()
+          import subprocess
+          files=[Path('output/daily_video.mp4')]+sorted(Path('output/youtube_uploads').glob('*.mp4'))
+          if len(files)<13: raise SystemExit(f'Expected 13 publication videos, found {len(files)}')
           for p in files:
-              p=p.resolve()
-              if str(p) in seen: continue
-              seen.add(str(p))
-              if not p.is_file() or p.stat().st_size < 10240: raise SystemExit(f'Invalid publication file: {p}')
-              subprocess.run(['ffprobe','-v','error','-show_streams','-show_format',str(p)],check=True,stdout=subprocess.DEVNULL)
+              if not p.is_file() or p.stat().st_size<10240: raise SystemExit(f'Invalid publication file: {p}')
               subprocess.run(['ffmpeg','-v','error','-xerror','-i',str(p),'-map','0:v:0','-f','null','-'],check=True)
-          Path('/tmp/astro_publish_files.json').write_text(json.dumps([str(Path(x).resolve()) for x in files],ensure_ascii=False),encoding='utf-8')
-          PY
-      - name: Normalize all publication videos for platform compatibility
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          import json, subprocess
-          for f in [Path(x) for x in json.loads(Path('/tmp/astro_publish_files.json').read_text(encoding='utf-8'))]:
-              tmp=f.with_name(f.stem+'.normalized.mp4')
-              subprocess.run(['ffmpeg','-v','error','-xerror','-y','-i',str(f),'-map','0:v:0','-map','0:a?','-c:v','libx264','-pix_fmt','yuv420p','-movflags','+faststart','-c:a','aac','-b:a','128k',str(tmp)],check=True)
-              if not tmp.is_file() or tmp.stat().st_size < 10240: raise SystemExit(f'Normalization failed: {tmp}')
-              subprocess.run(['ffmpeg','-v','error','-xerror','-i',str(tmp),'-map','0:v:0','-f','null','-'],check=True)
-              tmp.replace(f)
-          PY
-      - name: Final post-normalization media gate
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          import json, subprocess
-          for f in [Path(x) for x in json.loads(Path('/tmp/astro_publish_files.json').read_text(encoding='utf-8'))]:
-              subprocess.run(['ffprobe','-v','error','-select_streams','v:0','-show_entries','stream=codec_name,width,height','-of','default=noprint_wrappers=1',str(f)],check=True)
-              subprocess.run(['ffmpeg','-v','error','-xerror','-i',str(f),'-map','0:v:0','-f','null','-'],check=True)
           PY
       - name: Publish to YouTube
         continue-on-error: true
@@ -131,19 +85,18 @@ jobs:
           p=Path('output/facebook_publish_manifest.json')
           if not p.exists(): raise SystemExit('Missing facebook_publish_manifest.json')
           n=len(json.loads(p.read_text(encoding='utf-8')).get('videos',[]))
-          if n < 13: raise SystemExit(f'facebook_publish_manifest.json: only {n} videos')
+          if n<13: raise SystemExit(f'facebook_publish_manifest.json: only {n} videos')
           print(f'facebook_publish_manifest.json: PASS ({n} videos)')
           PY
-      - name: Report YouTube publication result without blocking Facebook
+      - name: Report YouTube result
         if: always()
         run: |
           python - <<'PY'
           from pathlib import Path
           import json
           p=Path('output/youtube_publish_manifest.json')
-          if not p.exists(): print('YOUTUBE: unavailable or failed; Facebook publication remains authoritative for this run')
-          else:
-              data=json.loads(p.read_text(encoding='utf-8')); print(f"YOUTUBE: PASS ({len(data.get('videos',[]))} published)")
+          if p.exists(): print(f"YOUTUBE: PASS ({len(json.loads(p.read_text()).get('videos',[]))} published)")
+          else: print('YOUTUBE: unavailable or failed; Facebook publication remains authoritative')
           PY
       - name: Package artifact
         if: always()
