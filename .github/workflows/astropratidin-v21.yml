@@ -43,27 +43,35 @@ jobs:
       - name: Render with automatic retry
         run: |
           for n in 1 2; do python -m video_engine.premium_entry_v21_1 && exit 0; [ "$n" = 2 ] && exit 1; sleep 30; done
-      - name: Validate main video
+      - name: Validate major daily video
         run: |
           test -s output/daily_video.mp4
           test -s output/daily_script.md
           test -s output/publication_date.txt
           ffmpeg -v error -xerror -i output/daily_video.mp4 -map 0:v:0 -f null -
-      - name: Build 12 Rashi videos
+          echo "MAJOR DAILY VIDEO: PASS"
+      - name: Build exactly 12 individual Rashi videos
         run: |
           for n in 1 2; do rm -rf output/youtube_uploads; python scripts/build_daily_youtube_videos.py && [ "$(find output/youtube_uploads -maxdepth 1 -name '*.mp4' | wc -l)" -eq 12 ] && exit 0; [ "$n" = 2 ] && exit 1; sleep 30; done
       - name: Build seven-day transit videos
         run: python scripts/build_transit_videos.py
-      - name: Publication media gate
+      - name: 13-video publication media gate
         run: |
           python - <<'PY'
           from pathlib import Path
           import subprocess
-          files=[Path('output/daily_video.mp4')]+sorted(Path('output/youtube_uploads').glob('*.mp4'))
-          if len(files)<13: raise SystemExit(f'Expected 13 publication videos, found {len(files)}')
+          main = Path('output/daily_video.mp4')
+          rashis = sorted(Path('output/youtube_uploads').glob('*.mp4'))
+          files = [main] + rashis
+          if len(rashis) != 12:
+              raise SystemExit(f'Expected exactly 12 individual Rashi videos, found {len(rashis)}')
+          if len(files) != 13:
+              raise SystemExit(f'Expected exactly 13 publication videos, found {len(files)}')
           for p in files:
-              if not p.is_file() or p.stat().st_size<10240: raise SystemExit(f'Invalid publication file: {p}')
+              if not p.is_file() or p.stat().st_size < 10240:
+                  raise SystemExit(f'Invalid publication file: {p}')
               subprocess.run(['ffmpeg','-v','error','-xerror','-i',str(p),'-map','0:v:0','-f','null','-'],check=True)
+          print('PRODUCTION MEDIA GATE: PASS — 1 major daily video + 12 individual Rashi videos')
           PY
       - name: Publish to YouTube
         continue-on-error: true
@@ -106,4 +114,4 @@ jobs:
       - name: Production summary
         if: always()
         run: |
-          echo "Production workflow completed. Videos are published directly to YouTube and Facebook; no GitHub artifact upload is required for normal daily production."
+          echo "Production summary: required output is 1 major daily video + 12 individual Rashi videos. GitHub artifact upload is disabled to avoid storage-quota failures."
