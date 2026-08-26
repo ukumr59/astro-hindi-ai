@@ -76,18 +76,23 @@ jobs:
           FB_PAGE_ID: ${{ secrets.META_PAGE_ID || secrets.FB_PAGE_ID }}
           FB_PAGE_ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN || secrets.META_PAGE_ACCESS_TOKEN || secrets.FB_PAGE_ACCESS_TOKEN }}
           FB_API_VERSION: v25.0
+          FACEBOOK_MAX_DAILY_UPLOADS: '1'
         run: python scripts/publish_facebook_daily.py
       - name: Verify Facebook publication manifest
         run: |
           python - <<'PY'
           from pathlib import Path
-          import json
+          import json, os
           p=Path('output/facebook_publish_manifest.json')
           if not p.exists(): raise SystemExit('Missing facebook_publish_manifest.json')
-          n=len(json.loads(p.read_text(encoding='utf-8')).get('videos',[]))
-          if n<13: raise SystemExit(f'facebook_publish_manifest.json: only {n} videos')
+          data=json.loads(p.read_text(encoding='utf-8'))
+          n=len(data.get('videos',[]))
+          required=max(1,int(os.environ.get('FACEBOOK_MAX_DAILY_UPLOADS','1')))
+          if n<required: raise SystemExit(f'facebook_publish_manifest.json: only {n} videos, expected at least {required}')
           print(f'facebook_publish_manifest.json: PASS ({n} videos)')
           PY
+        env:
+          FACEBOOK_MAX_DAILY_UPLOADS: '1'
       - name: Report YouTube result
         if: always()
         run: |
