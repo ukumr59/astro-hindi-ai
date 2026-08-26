@@ -1,4 +1,4 @@
-"""Publish AstroPratidin daily videos and scheduled major-transit alerts reliably."""
+"""Publish AstroPratidin videos reliably with a conservative daily cap."""
 from pathlib import Path
 import json
 import os
@@ -11,7 +11,8 @@ import urllib.error
 OUT=Path("output"); UPLOADS=OUT/"youtube_uploads"
 API_VERSION=os.environ.get("FB_API_VERSION","v25.0")
 GRAPH_VIDEO=f"https://graph-video.facebook.com/{API_VERSION}"; GRAPH_API=f"https://graph.facebook.com/{API_VERSION}"
-RASHIS=[(1,"मेष","मेष राशि"),(2,"वृषभ","वृषभ राशि"),(3,"मिथुन","मिथुन राशि"),(4,"कर्क","कर्क राशि"),(5,"सिंह","सिंह राशि"),(6,"कन्या","कन्या राशि"),(7,"तुला","तुला राशि"),(8,"वृश्चिक","वृश्चिक राशि"),(9,"धनु","धनु राशि"),(10,"मकर","मकर राशि"),(11,"कुंभ","कुंभ राशि"),(12,"मीन","मीन राशि")]
+RASHIS=[(1,"मेष","मेष राशि"),(2,"वृषभ","वृषभ राशि"),(3,"कर्क","कर्क राशि"),(4,"सिंह","सिंह राशि"),(5,"कन्या","कन्या राशि"),(6,"तुला","तुला राशि"),(7,"वृश्चिक","वृश्चिक राशि"),(8,"धनु","धनु राशि"),(9,"मकर","मकर राशि"),(10,"कुंभ","कुंभ राशि"),(11,"मीन","मीन राशि")]
+# Keep canonical publishing focused on the combined daily production. Individual clips remain in the artifact for future use.
 
 def require_env(name):
     value=os.environ.get(name,"").strip()
@@ -24,12 +25,11 @@ def api_json(url):
     except urllib.error.HTTPError as exc:
         body=exc.read().decode("utf-8",errors="replace")
         if '"code":190' in body or '"error_subcode":463' in body:
-            raise SystemExit("Facebook access token is expired or invalid. Update the repository secret META_ACCESS_TOKEN with a valid Page/System User token and rerun.") from exc
+            raise SystemExit("Facebook access token is expired or invalid. Update META_ACCESS_TOKEN with a valid Page/System User token and rerun.") from exc
         raise SystemExit(f"Facebook API validation failed: HTTP {exc.code}: {body[-1500:]}") from exc
 
 def validate_page_access(page_id,token):
-    url=f"{GRAPH_API}/{page_id}?fields=id,name&access_token={urllib.parse.quote(token,safe='')}"
-    data=api_json(url)
+    data=api_json(f"{GRAPH_API}/{page_id}?fields=id,name&access_token={urllib.parse.quote(token,safe='')}")
     if str(data.get("id",""))!=str(page_id): raise SystemExit(f"Facebook token/page mismatch: expected page {page_id}, got {data}")
     print("FACEBOOK TOKEN VALIDATION: PASS")
 
@@ -79,23 +79,19 @@ def publication_date():
 
 def main():
     token=require_env("FB_PAGE_ACCESS_TOKEN"); page_id=resolve_page_id(token); validate_page_access(page_id,token)
+    try: max_uploads=max(1,int(os.environ.get("FACEBOOK_MAX_DAILY_UPLOADS","1")))
+    except ValueError: raise SystemExit("FACEBOOK_MAX_DAILY_UPLOADS must be a positive integer")
     target_date=publication_date(); script=(OUT/"daily_script.md").read_text(encoding="utf-8"); jobs=[]
     combined=OUT/"daily_video.mp4"
     if not combined.exists(): raise SystemExit("Combined daily video missing")
     jobs.append(("combined",None,combined,f"आज का राशिफल | AstroPratidin | {target_date}","AstroPratidin — आपका दैनिक ज्योतिष साथी।\n\n"+script+"\n\n#AstroPratidin #दैनिकराशिफल #ज्योतिष #राशिफल"))
     for index,key,label in RASHIS:
         path=UPLOADS/f"{index:02d}_{key}.mp4"
-        if not path.exists(): raise SystemExit(f"Individual Rashi video missing: {path}")
-        jobs.append(("rashi",key,path,f"आज का {label} राशिफल | AstroPratidin | {target_date}",f"AstroPratidin — {label} के लिए {target_date} का दैनिक राशिफल।"))
-    transit_manifest=OUT/"transit_video_manifest.json"
-    if transit_manifest.exists():
-        for event in json.loads(transit_manifest.read_text(encoding="utf-8")).get("events",[]):
-            path=Path(event["video_path"])
-            if not path.exists(): raise SystemExit(f"Transit video missing: {path}")
-            jobs.append(("transit",event["id"],path,f"7 दिन पहले: {event['description_hi']} | AstroPratidin",f"AstroPratidin प्रमुख ग्रह गोचर अलर्ट।\n\n{event['description_hi']}।"))
-    results=[]; print(f"FACEBOOK PUBLISH PLAN: {len(jobs)} total = 13 daily + {len(jobs)-13} transit alert(s)")
-    for kind,key,path,title,description in jobs:
+        if path.exists(): jobs.append(("rashi",key,path,f"आज का {label} राशिफल | AstroPratidin | {target_date}",f"AstroPratidin — {label} के लिए {target_date} का दैनिक राशिफल।"))
+    planned=jobs[:max_uploads]
+    results=[]; print(f"FACEBOOK PUBLISH PLAN: publishing {len(planned)} of {len(jobs)} available videos; daily cap={max_uploads}")
+    for kind,key,path,title,description in planned:
         video_id,permalink=upload_video(page_id,token,path,title,description); results.append({"type":kind,"key":key,"video_id":video_id,"url":permalink})
-    (OUT/"facebook_publish_manifest.json").write_text(json.dumps({"date":target_date,"page_id":page_id,"api_version":API_VERSION,"videos":results},ensure_ascii=False,indent=2),encoding="utf-8")
-    print(f"FACEBOOK PUBLISH: PASS — {len(results)} total videos")
+    (OUT/"facebook_publish_manifest.json").write_text(json.dumps({"date":target_date,"page_id":page_id,"api_version":API_VERSION,"planned_total":len(jobs),"daily_cap":max_uploads,"videos":results},ensure_ascii=False,indent=2),encoding="utf-8")
+    print(f"FACEBOOK PUBLISH: PASS — {len(results)} video(s) published within configured daily cap")
 if __name__=="__main__": main()
