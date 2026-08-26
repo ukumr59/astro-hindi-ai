@@ -11,8 +11,7 @@ import urllib.error
 OUT=Path("output"); UPLOADS=OUT/"youtube_uploads"
 API_VERSION=os.environ.get("FB_API_VERSION","v25.0")
 GRAPH_VIDEO=f"https://graph-video.facebook.com/{API_VERSION}"; GRAPH_API=f"https://graph.facebook.com/{API_VERSION}"
-RASHIS=[(1,"मेष","मेष राशि"),(2,"वृषभ","वृषभ राशि"),(3,"कर्क","कर्क राशि"),(4,"सिंह","सिंह राशि"),(5,"कन्या","कन्या राशि"),(6,"तुला","तुला राशि"),(7,"वृश्चिक","वृश्चिक राशि"),(8,"धनु","धनु राशि"),(9,"मकर","मकर राशि"),(10,"कुंभ","कुंभ राशि"),(11,"मीन","मीन राशि")]
-# Keep canonical publishing focused on the combined daily production. Individual clips remain in the artifact for future use.
+RASHIS=[(1,"मेष","मेष राशि"),(2,"वृषभ","वृषभ राशि"),(3,"मिथुन","मिथुन राशि"),(4,"कर्क","कर्क राशि"),(5,"सिंह","सिंह राशि"),(6,"कन्या","कन्या राशि"),(7,"तुला","तुला राशि"),(8,"वृश्चिक","वृश्चिक राशि"),(9,"धनु","धनु राशि"),(10,"मकर","मकर राशि"),(11,"कुंभ","कुंभ राशि"),(12,"मीन","मीन राशि")]
 
 def require_env(name):
     value=os.environ.get(name,"").strip()
@@ -84,7 +83,7 @@ def main():
     target_date=publication_date(); script=(OUT/"daily_script.md").read_text(encoding="utf-8"); jobs=[]
     combined=OUT/"daily_video.mp4"
     if not combined.exists(): raise SystemExit("Combined daily video missing")
-    jobs.append(("combined",None,combined,f"आज का राशिफल | AstroPratidin | {target_date}","AstroPratidin — आपका दैनिक ज्योतिष साथी।\n\n"+script+"\n\n#AstroPratidin #दैनिकराशिफल #ज्योतिष #राशिफल"))
+    jobs.append(("combined",None,combined,f"आज का राशिफल | AstroPratidin | {target_date}","AstroPratidin — आपका दैनिक ज्योतिष साथी。\n\n"+script+"\n\n#AstroPratidin #दैनिकराशिफल #ज्योतिष #राशिफल"))
     for index,key,label in RASHIS:
         path=UPLOADS/f"{index:02d}_{key}.mp4"
         if path.exists(): jobs.append(("rashi",key,path,f"आज का {label} राशिफल | AstroPratidin | {target_date}",f"AstroPratidin — {label} के लिए {target_date} का दैनिक राशिफल।"))
