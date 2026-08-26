@@ -9,6 +9,7 @@ on:
         type: string
         default: ""
   schedule:
+    # 17:30 UTC = 23:00 IST
     - cron: '30 17 * * *'
 
 concurrency:
@@ -23,13 +24,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
-      - name: Checkout production branch
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           ref: v21-premium-9-5-architecture
           fetch-depth: 1
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           cache: pip
@@ -42,14 +41,7 @@ jobs:
           pip install google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2
       - name: Compile production code
         run: |
-          python -m py_compile \
-            video_engine/render_sync.py video_engine/visual_profiles.py \
-            video_engine/premium_entry.py video_engine/premium_entry_v21_1.py \
-            astro_engine/main.py astro_engine/rules.py \
-            content_engine/diversity.py content_engine/script.py \
-            scripts/validate_content_diversity.py \
-            scripts/build_daily_youtube_videos.py scripts/publish_youtube_daily.py \
-            scripts/publish_facebook_daily.py
+          python -m py_compile video_engine/render_sync.py video_engine/visual_profiles.py video_engine/premium_entry.py video_engine/premium_entry_v21_1.py astro_engine/main.py astro_engine/rules.py content_engine/diversity.py content_engine/script.py scripts/validate_content_diversity.py scripts/build_daily_youtube_videos.py scripts/publish_youtube_daily.py scripts/publish_facebook_daily.py
       - name: Generate daily content
         env:
           TARGET_DATE_IST: ${{ github.event.inputs.target_date_ist || '' }}
@@ -78,8 +70,7 @@ jobs:
             [ "$attempt" = 2 ] && exit 1
             sleep 30
           done
-      - name: Upload publication bundle
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: astropratidin-publication-bundle
           path: output
@@ -107,20 +98,20 @@ jobs:
         with:
           name: astropratidin-publication-bundle
           path: output
-      - name: Publish all videos to YouTube
+      - name: Publish within conservative daily cap
         env:
           YOUTUBE_TOKEN_JSON: ${{ secrets.ASTROPRATIDIN_YOUTUBE_TOKEN_JSON }}
+          YOUTUBE_MAX_DAILY_UPLOADS: '1'
         run: python scripts/publish_youtube_daily.py
       - name: Verify YouTube publication manifest
         run: |
           python - <<'PY'
           from pathlib import Path
           import json
-          p=Path('output/youtube_publish_manifest.json')
-          if not p.exists(): raise SystemExit('Missing youtube_publish_manifest.json')
-          count=len(json.loads(p.read_text(encoding='utf-8')).get('videos',[]))
-          if count < 13: raise SystemExit(f'Expected 13 YouTube videos, found {count}')
-          print(f'youtube_publish_manifest.json: PASS ({count} videos)')
+          data=json.loads(Path('output/youtube_publish_manifest.json').read_text(encoding='utf-8'))
+          count=len(data.get('videos',[])); expected=int(data.get('daily_cap',1))
+          if count < 1 or count > expected: raise SystemExit(f'Unexpected YouTube publish count: {count}, cap={expected}')
+          print(f'YouTube publication: PASS ({count} video(s), cap={expected})')
           PY
 
   facebook_publish:
@@ -137,22 +128,22 @@ jobs:
         with:
           name: astropratidin-publication-bundle
           path: output
-      - name: Publish all videos to Facebook
+      - name: Publish within conservative daily cap
         env:
           FB_PAGE_ID: ${{ secrets.META_PAGE_ID || secrets.FB_PAGE_ID }}
           FB_PAGE_ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN || secrets.META_PAGE_ACCESS_TOKEN || secrets.FB_PAGE_ACCESS_TOKEN }}
           FB_API_VERSION: v25.0
+          FACEBOOK_MAX_DAILY_UPLOADS: '1'
         run: python scripts/publish_facebook_daily.py
       - name: Verify Facebook publication manifest
         run: |
           python - <<'PY'
           from pathlib import Path
           import json
-          p=Path('output/facebook_publish_manifest.json')
-          if not p.exists(): raise SystemExit('Missing facebook_publish_manifest.json')
-          count=len(json.loads(p.read_text(encoding='utf-8')).get('videos',[]))
-          if count < 13: raise SystemExit(f'Expected 13 Facebook videos, found {count}')
-          print(f'facebook_publish_manifest.json: PASS ({count} videos)')
+          data=json.loads(Path('output/facebook_publish_manifest.json').read_text(encoding='utf-8'))
+          count=len(data.get('videos',[])); expected=int(data.get('daily_cap',1))
+          if count < 1 or count > expected: raise SystemExit(f'Unexpected Facebook publish count: {count}, cap={expected}')
+          print(f'Facebook publication: PASS ({count} video(s), cap={expected})')
           PY
 
   publication_summary:
