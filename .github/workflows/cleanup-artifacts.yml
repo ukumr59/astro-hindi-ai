@@ -1,0 +1,44 @@
+name: Cleanup GitHub Actions Artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  schedule:
+    # Run hourly so artifacts never remain in storage for more than ~6 hours.
+    - cron: '17 * * * *'
+
+permissions:
+  actions: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete artifacts older than 6 hours
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          CUTOFF=$(date -u -d '6 hours ago' +%s)
+          DELETED=0
+
+          while IFS=$'\t' read -r ARTIFACT_ID CREATED_AT; do
+            [ -z "${ARTIFACT_ID:-}" ] && continue
+            CREATED_TS=$(date -u -d "$CREATED_AT" +%s)
+
+            if [ "$CREATED_TS" -lt "$CUTOFF" ]; then
+              echo "Deleting artifact id=$ARTIFACT_ID created_at=$CREATED_AT"
+              gh api --method DELETE \
+                "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}"
+              DELETED=$((DELETED + 1))
+            fi
+          done < <(
+            gh api --paginate \
+              "/repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" \
+              --jq '.artifacts[] | [.id, .created_at] | @tsv'
+          )
+
+          echo "ARTIFACT CLEANUP: deleted $DELETED artifact(s) older than 6 hours."
+          echo "This also removes every existing artifact older than 24 hours."
