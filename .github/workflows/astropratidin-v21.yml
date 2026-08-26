@@ -38,7 +38,7 @@ jobs:
           pip install google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2
       - name: Compile
         run: python -m py_compile video_engine/premium_entry_v21_1.py astro_engine/main.py scripts/build_daily_youtube_videos.py scripts/publish_youtube_daily.py scripts/publish_facebook_daily.py scripts/build_transit_videos.py
-      - name: Generate daily content
+      - name: Generate daily content and next-7-day transit schedule
         run: python -m astro_engine.main
       - name: Render with automatic retry
         run: |
@@ -53,8 +53,41 @@ jobs:
       - name: Build exactly 12 individual Rashi videos
         run: |
           for n in 1 2; do rm -rf output/youtube_uploads; python scripts/build_daily_youtube_videos.py && [ "$(find output/youtube_uploads -maxdepth 1 -name '*.mp4' | wc -l)" -eq 12 ] && exit 0; [ "$n" = 2 ] && exit 1; sleep 30; done
-      - name: Build seven-day transit videos
+      - name: Build videos for every major transit in next 7 days
         run: python scripts/build_transit_videos.py
+      - name: Validate next-7-day transit detection and videos
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json, subprocess
+          from datetime import datetime, timedelta
+          from zoneinfo import ZoneInfo
+          IST=ZoneInfo('Asia/Kolkata')
+          schedule=Path('output/future_transits.json')
+          queue=Path('output/transit_publish_queue.json')
+          manifest=Path('output/transit_video_manifest.json')
+          for p in (schedule, queue, manifest):
+              if not p.exists(): raise SystemExit(f'Missing transit output: {p}')
+          generated=json.loads(schedule.read_text(encoding='utf-8'))
+          queued=json.loads(queue.read_text(encoding='utf-8')).get('events',[])
+          built=json.loads(manifest.read_text(encoding='utf-8')).get('events',[])
+          events=generated.get('events',[])
+          start=datetime.fromisoformat(generated['window_start_ist']).astimezone(IST)
+          end=start+timedelta(days=7)
+          ids=set()
+          for e in events:
+              when=datetime.fromisoformat(e['occurrence_ist']).astimezone(IST)
+              if not (start <= when <= end): raise SystemExit(f'Transit outside 7-day window: {e}')
+              if e['id'] in ids: raise SystemExit(f'Duplicate transit id: {e["id"]}')
+              ids.add(e['id'])
+          if {e['id'] for e in queued} != ids: raise SystemExit('Transit queue does not exactly match next-7-day detection')
+          if {e['id'] for e in built} != ids: raise SystemExit('Transit video manifest does not exactly match detected transits')
+          for e in built:
+              p=Path(e['video_path'])
+              if not p.is_file() or p.stat().st_size < 10240: raise SystemExit(f'Invalid transit video: {p}')
+              subprocess.run(['ffmpeg','-v','error','-xerror','-i',str(p),'-map','0:v:0','-f','null','-'],check=True)
+          print(f'NEXT-7-DAY TRANSIT GATE: PASS — {len(events)} transition(s) detected and {len(built)} valid video(s) built')
+          PY
       - name: 13-video publication media gate
         run: |
           python - <<'PY'
@@ -114,4 +147,4 @@ jobs:
       - name: Production summary
         if: always()
         run: |
-          echo "Production summary: required output is 1 major daily video + 12 individual Rashi videos. GitHub artifact upload is disabled to avoid storage-quota failures."
+          echo "Production summary: required output is 1 major daily video + 12 individual Rashi videos, plus a validated check and video build for every major planetary transition occurring in the next 7 days. GitHub artifact upload is disabled to avoid storage-quota failures."
