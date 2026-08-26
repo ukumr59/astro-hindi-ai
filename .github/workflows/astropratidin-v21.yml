@@ -48,7 +48,7 @@ jobs:
         run: python -m astro_engine.main
       - name: Render with automatic retry
         run: |
-          for n in 1 2; do python -m video_engine.premium_entry_v21_1 && exit 0; [ "$n" = 2 ] && exit 1; sleep 30; done
+          for n in 1 2; do python -m video_engine.premium_entry_v21_1.py && exit 0; [ "$n" = 2 ] && exit 1; sleep 30; done
       - name: Validate main video
         run: |
           test -s output/daily_video.mp4
@@ -76,40 +76,29 @@ jobs:
           manifest=Path('output/transit_video_manifest.json')
           if manifest.exists():
               for item in json.loads(manifest.read_text(encoding='utf-8')).get('events',[]):
-                  raw=str(item['video_path']).strip()
-                  p=Path(raw)
-                  if not p.is_absolute():
-                      p=Path.cwd()/p
+                  raw=str(item['video_path']).strip(); p=Path(raw)
+                  if not p.is_absolute(): p=Path.cwd()/p
                   files.append(p)
-          if len(files) < 13:
-              raise SystemExit(f'Expected at least 13 publication videos, found {len(files)}')
+          if len(files) < 13: raise SystemExit(f'Expected at least 13 publication videos, found {len(files)}')
           seen=set()
           for p in files:
               p=p.resolve()
-              if str(p) in seen:
-                  continue
+              if str(p) in seen: continue
               seen.add(str(p))
-              if not p.is_file() or p.stat().st_size < 10240:
-                  raise SystemExit(f'Invalid publication file: {p}')
-              print(f'DEEP DECODE CHECK: {p}')
+              if not p.is_file() or p.stat().st_size < 10240: raise SystemExit(f'Invalid publication file: {p}')
               subprocess.run(['ffprobe','-v','error','-show_streams','-show_format',str(p)],check=True,stdout=subprocess.DEVNULL)
               subprocess.run(['ffmpeg','-v','error','-xerror','-i',str(p),'-map','0:v:0','-f','null','-'],check=True)
           Path('/tmp/astro_publish_files.json').write_text(json.dumps([str(Path(x).resolve()) for x in files],ensure_ascii=False),encoding='utf-8')
-          print(f'PUBLICATION MEDIA GATE: PASS ({len(files)} files)')
           PY
       - name: Normalize all publication videos for platform compatibility
         run: |
           python - <<'PY'
           from pathlib import Path
           import json, subprocess
-          files=[Path(x) for x in json.loads(Path('/tmp/astro_publish_files.json').read_text(encoding='utf-8'))]
-          for f in files:
+          for f in [Path(x) for x in json.loads(Path('/tmp/astro_publish_files.json').read_text(encoding='utf-8'))]:
               tmp=f.with_name(f.stem+'.normalized.mp4')
-              print(f'NORMALIZING: {f}')
               subprocess.run(['ffmpeg','-v','error','-xerror','-y','-i',str(f),'-map','0:v:0','-map','0:a?','-c:v','libx264','-pix_fmt','yuv420p','-movflags','+faststart','-c:a','aac','-b:a','128k',str(tmp)],check=True)
-              if not tmp.is_file() or tmp.stat().st_size < 10240:
-                  raise SystemExit(f'Normalization failed: {tmp}')
-              subprocess.run(['ffprobe','-v','error','-show_streams','-show_format',str(tmp)],check=True,stdout=subprocess.DEVNULL)
+              if not tmp.is_file() or tmp.stat().st_size < 10240: raise SystemExit(f'Normalization failed: {tmp}')
               subprocess.run(['ffmpeg','-v','error','-xerror','-i',str(tmp),'-map','0:v:0','-f','null','-'],check=True)
               tmp.replace(f)
           PY
@@ -118,22 +107,20 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           import json, subprocess
-          files=[Path(x) for x in json.loads(Path('/tmp/astro_publish_files.json').read_text(encoding='utf-8'))]
-          for f in files:
-              print(f'FINAL MEDIA PASS: {f}')
+          for f in [Path(x) for x in json.loads(Path('/tmp/astro_publish_files.json').read_text(encoding='utf-8'))]:
               subprocess.run(['ffprobe','-v','error','-select_streams','v:0','-show_entries','stream=codec_name,width,height','-of','default=noprint_wrappers=1',str(f)],check=True)
               subprocess.run(['ffmpeg','-v','error','-xerror','-i',str(f),'-map','0:v:0','-f','null','-'],check=True)
-          print(f'FINAL MEDIA GATE: PASS ({len(files)} files)')
           PY
       - name: Publish to YouTube
         continue-on-error: true
         env:
           YOUTUBE_TOKEN_JSON: ${{ secrets.ASTROPRATIDIN_YOUTUBE_TOKEN_JSON }}
+          YOUTUBE_MAX_DAILY_UPLOADS: '1'
         run: python scripts/publish_youtube_daily.py
       - name: Publish to Facebook
         env:
           FB_PAGE_ID: ${{ secrets.META_PAGE_ID || secrets.FB_PAGE_ID }}
-          FB_PAGE_ACCESS_TOKEN: ${{ secrets.META_PAGE_ACCESS_TOKEN || secrets.FB_PAGE_ACCESS_TOKEN }}
+          FB_PAGE_ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN || secrets.META_PAGE_ACCESS_TOKEN || secrets.FB_PAGE_ACCESS_TOKEN }}
           FB_API_VERSION: v25.0
         run: python scripts/publish_facebook_daily.py
       - name: Verify Facebook publication manifest
@@ -154,11 +141,9 @@ jobs:
           from pathlib import Path
           import json
           p=Path('output/youtube_publish_manifest.json')
-          if not p.exists():
-              print('YOUTUBE: unavailable or failed; Facebook publication remains authoritative for this run')
+          if not p.exists(): print('YOUTUBE: unavailable or failed; Facebook publication remains authoritative for this run')
           else:
-              n=len(json.loads(p.read_text(encoding='utf-8')).get('videos',[]))
-              print(f'YOUTUBE: PASS ({n} videos)')
+              data=json.loads(p.read_text(encoding='utf-8')); print(f"YOUTUBE: PASS ({len(data.get('videos',[]))} published)")
           PY
       - name: Package artifact
         if: always()
