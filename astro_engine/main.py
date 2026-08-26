@@ -65,11 +65,24 @@ def run():
     script = build_daily_script(target_noon, current_positions, events)
     (OUT / "daily_script.md").write_text(script, encoding="utf-8")
 
+    # Scan the full upcoming seven-day window and queue every major sign-entry
+    # event for video generation. The transit renderer may legitimately build
+    # zero videos when no qualifying major transit exists in the window.
     future = find_major_transits(run_time_ist, days=7)
-    (OUT / "future_transits.json").write_text(json.dumps({"generated_at_ist": run_time_ist.isoformat(), "lead_days": 7, "major_planets": ["Jupiter", "Saturn", "Rahu", "Ketu", "Mars", "Mercury", "Venus"], "events": future}, ensure_ascii=False, indent=2), encoding="utf-8")
-    publish_date_ist = target_date.isoformat()
-    lead_events = [e for e in future if e["publish_on_ist"] == publish_date_ist]
-    (OUT / "transit_publish_queue.json").write_text(json.dumps({"publish_date_ist": publish_date_ist, "lead_days": 7, "events": lead_events}, ensure_ascii=False, indent=2), encoding="utf-8")
+    future_payload = {
+        "generated_at_ist": run_time_ist.isoformat(),
+        "window_start_ist": run_time_ist.isoformat(),
+        "window_end_ist": (run_time_ist + timedelta(days=7)).isoformat(),
+        "lead_days": 7,
+        "major_planets": ["Jupiter", "Saturn", "Rahu", "Ketu", "Mars", "Mercury", "Venus"],
+        "events": future,
+    }
+    (OUT / "future_transits.json").write_text(json.dumps(future_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    (OUT / "transit_publish_queue.json").write_text(json.dumps({
+        "generated_at_ist": run_time_ist.isoformat(),
+        "window_days": 7,
+        "events": future,
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print("=" * 70)
     print("REAL PLANETARY ENGINE")
@@ -78,10 +91,10 @@ def run():
     print("=" * 70)
     print(f"CONTENT DIVERSITY PROFILE: {profile['key']} / visual={profile['visual_style']}")
     print(f"Generated publication content for: {target_date.isoformat()}")
-    print(f"Generated future transit schedule: output/future_transits.json")
-    print(f"Seven-day advance transit videos due for publication date: {len(lead_events)}")
-    for event in lead_events:
-        print(f"TRANSIT ALERT: {event['description_hi']} on {event['occurrence_ist']}")
+    print("Generated future transit schedule: output/future_transits.json")
+    print(f"NEXT 7 DAYS: {len(future)} major planetary transit(s) detected")
+    for event in future:
+        print(f"TRANSIT CHECK: {event['description_hi']} on {event['occurrence_ist']}")
     print("Generated: output/planetary_report.txt")
     print("Generated: output/content_profile.json")
     print("Generated: output/daily_script.md")
