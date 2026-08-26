@@ -103,14 +103,7 @@ jobs:
           if p.exists(): print(f"YOUTUBE: PASS ({len(json.loads(p.read_text()).get('videos',[]))} published)")
           else: print('YOUTUBE: unavailable or failed; Facebook publication remains authoritative')
           PY
-      - name: Package artifact
+      - name: Production summary
         if: always()
-        run: '[ -d output ] && zip -qr daily-astro-output-v21.9.5-premium.zip output || true'
-      - name: Upload artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: daily-astro-output-v21.9.5-premium
-          path: daily-astro-output-v21.9.5-premium.zip
-          if-no-files-found: warn
-          retention-days: 14
+        run: |
+          echo "Production workflow completed. Videos are published directly to YouTube and Facebook; no GitHub artifact upload is required for normal daily production."
