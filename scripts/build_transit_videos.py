@@ -1,10 +1,10 @@
-"""Build branded advance-alert videos for major planetary transits."""
+"""Build branded videos for every major planetary transit detected in the next 7 days."""
 from pathlib import Path
 import asyncio
 import json
 import re
 import subprocess
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import edge_tts
@@ -49,7 +49,7 @@ def wrap(text, limit=34):
     for word in text.split():
         candidate = word if not current else current + " " + word
         if len(candidate) <= limit:
-            current = candidate
+            current = word if not current else candidate
         else:
             if current:
                 lines.append(current)
@@ -86,10 +86,9 @@ def make_slides(event, out_dir):
     date_text = occurrence.strftime("%d-%m-%Y")
     time_text = occurrence.strftime("%H:%M IST")
     slides = []
-
     canvas, draw = slide_base()
     center(draw, "प्रमुख ग्रह गोचर", 340, W - 120, 66, GOLD)
-    center(draw, "7 दिन पहले विशेष सूचना", 445, W - 120, 42, CREAM)
+    center(draw, "आगामी 7 दिनों का विशेष अलर्ट", 445, W - 120, 42, CREAM)
     panel(draw, (60, 610, W - 60, 1190))
     center(draw, event["planet_hi"], 690, W - 180, 70, GOLD)
     center(draw, "का राशि परिवर्तन", 800, W - 180, 42, CREAM)
@@ -97,57 +96,33 @@ def make_slides(event, out_dir):
     center(draw, f"गोचर तिथि: {date_text}", 1035, W - 180, 38, GOLD)
     center(draw, f"समय: {time_text}", 1095, W - 180, 34, CREAM)
     center(draw, "AstroPratidin", 1510, W - 120, 38, GOLD)
-    p1 = out_dir / "01_alert.jpg"
-    canvas.convert("RGB").save(p1, "JPEG", quality=98, subsampling=0)
-    slides.append(p1)
-
+    p1 = out_dir / "01_alert.jpg"; canvas.convert("RGB").save(p1, "JPEG", quality=98, subsampling=0); slides.append(p1)
     canvas, draw = slide_base()
     center(draw, "यह गोचर क्यों महत्वपूर्ण है?", 360, W - 120, 54, GOLD)
     panel(draw, (60, 560, W - 60, 1370))
-    text = [
-        f"{event['planet_hi']} का {event['from_sign']} से {event['to_sign']} में प्रवेश एक महत्वपूर्ण राशि परिवर्तन है।",
-        "यह परिवर्तन सभी राशियों के लिए ग्रह-स्थिति के संदर्भ में नए संकेत सक्रिय करता है।",
-        "व्यक्तिगत प्रभाव चंद्र राशि, लग्न और जन्म कुंडली के अनुसार अलग-अलग हो सकता है।",
-    ]
+    text = [f"{event['planet_hi']} का {event['from_sign']} से {event['to_sign']} में प्रवेश एक महत्वपूर्ण राशि परिवर्तन है।", "यह परिवर्तन सभी राशियों के लिए ग्रह-स्थिति के संदर्भ में नए संकेत सक्रिय करता है।", "व्यक्तिगत प्रभाव चंद्र राशि, लग्न और जन्म कुंडली के अनुसार अलग-अलग हो सकता है।"]
     y = 680
     for paragraph in text:
-        for line in wrap(paragraph, 38):
-            center(draw, line, y, W - 160, 31, CREAM, 22)
-            y += 50
+        for line in wrap(paragraph, 38): center(draw, line, y, W - 160, 31, CREAM, 22); y += 50
         y += 34
-    center(draw, "अगले 7 दिनों में इस गोचर पर विशेष ध्यान दें", 1510, W - 120, 31, GOLD)
-    p2 = out_dir / "02_context.jpg"
-    canvas.convert("RGB").save(p2, "JPEG", quality=98, subsampling=0)
-    slides.append(p2)
-
+    center(draw, "आने वाले दिनों में इस गोचर पर विशेष ध्यान दें", 1510, W - 120, 31, GOLD)
+    p2 = out_dir / "02_context.jpg"; canvas.convert("RGB").save(p2, "JPEG", quality=98, subsampling=0); slides.append(p2)
     canvas, draw = slide_base()
     center(draw, "विशेष ग्रह गोचर अलर्ट", 360, W - 120, 54, GOLD)
     panel(draw, (60, 560, W - 60, 1280))
-    center(draw, f"{event['planet_hi']}", 690, W - 160, 70, GOLD)
+    center(draw, event["planet_hi"], 690, W - 160, 70, GOLD)
     center(draw, f"{event['from_sign']} से {event['to_sign']}", 820, W - 160, 48, CREAM)
     center(draw, f"{date_text} • {time_text}", 930, W - 160, 38, CREAM)
     center(draw, "AstroPratidin पर जुड़े रहें", 1110, W - 160, 42, GOLD)
     center(draw, "दैनिक राशिफल और आगामी गोचर अपडेट के लिए", 1190, W - 160, 30, CREAM)
     center(draw, "फॉलो • सब्सक्राइब • शेयर", 1510, W - 160, 34, GOLD)
-    p3 = out_dir / "03_close.jpg"
-    canvas.convert("RGB").save(p3, "JPEG", quality=98, subsampling=0)
-    slides.append(p3)
+    p3 = out_dir / "03_close.jpg"; canvas.convert("RGB").save(p3, "JPEG", quality=98, subsampling=0); slides.append(p3)
     return slides
 
 
 def narration(event):
     occurrence = datetime.fromisoformat(event["occurrence_ist"]).astimezone(IST)
-    date_text = occurrence.strftime("%d %B %Y")
-    time_text = occurrence.strftime("%H:%M IST")
-    return (
-        f"नमस्कार। AstroPratidin पर यह है प्रमुख ग्रह गोचर का विशेष अलर्ट। "
-        f"{event['planet_hi']} का {event['from_sign']} से {event['to_sign']} राशि में प्रवेश होने वाला है। "
-        f"यह महत्वपूर्ण राशि परिवर्तन {date_text} को लगभग {time_text} पर होगा। "
-        f"हम इस गोचर की सूचना सात दिन पहले दे रहे हैं ताकि आप आने वाले परिवर्तन को समझने के लिए तैयार रहें। "
-        f"इस गोचर का व्यक्तिगत प्रभाव चंद्र राशि, लग्न और जन्म कुंडली के अनुसार अलग-अलग हो सकता है। "
-        f"AstroPratidin पर आगामी दिनों में इस गोचर से जुड़े राशिवार संकेत और दैनिक अपडेट देखते रहें। "
-        f"वीडियो उपयोगी लगे तो फॉलो, सब्सक्राइब और शेयर करें। नमस्कार।"
-    )
+    return (f"नमस्कार। AstroPratidin पर यह है प्रमुख ग्रह गोचर का विशेष अलर्ट। {event['planet_hi']} का {event['from_sign']} से {event['to_sign']} राशि में प्रवेश होने वाला है। यह महत्वपूर्ण राशि परिवर्तन {occurrence.strftime('%d %B %Y')} को लगभग {occurrence.strftime('%H:%M IST')} पर होगा। यह गोचर आने वाले सात दिनों में हो रहा है। इसका व्यक्तिगत प्रभाव चंद्र राशि, लग्न और जन्म कुंडली के अनुसार अलग-अलग हो सकता है। AstroPratidin पर आगामी दिनों में इस गोचर से जुड़े राशिवार संकेत और दैनिक अपडेट देखते रहें। वीडियो उपयोगी लगे तो फॉलो, सब्सक्राइब और शेयर करें। नमस्कार।")
 
 
 async def speak(text, path):
@@ -156,45 +131,29 @@ async def speak(text, path):
 
 def build_video(event):
     slug = re.sub(r"[^A-Za-z0-9_-]+", "_", event["id"]).strip("_")
-    work = TRANSIT_OUT / f"work_{slug}"
-    work.mkdir(parents=True, exist_ok=True)
+    work = TRANSIT_OUT / f"work_{slug}"; work.mkdir(parents=True, exist_ok=True)
     slides = make_slides(event, work)
-    audio = work / "voice.mp3"
-    asyncio.run(speak(narration(event), audio))
-    # Keep the visual timeline comfortably longer than the narration.
-    durations = [18.0, 22.0, 22.0]
+    audio = work / "voice.mp3"; asyncio.run(speak(narration(event), audio))
     concat = work / "slides.txt"
     with concat.open("w", encoding="utf-8") as fh:
-        for slide, duration in zip(slides, durations):
-            fh.write(f"file '{slide.resolve()}'\n")
-            fh.write(f"duration {duration}\n")
+        for slide, duration in zip(slides, [18.0, 22.0, 22.0]): fh.write(f"file '{slide.resolve()}'\nduration {duration}\n")
         fh.write(f"file '{slides[-1].resolve()}'\n")
     output = TRANSIT_OUT / f"transit_{slug}.mp4"
-    run([
-        "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat,
-        "-i", audio, "-vf", "fps=30,format=yuv420p,setsar=1", "-c:v", "libx264",
-        "-preset", "medium", "-crf", "20", "-c:a", "aac", "-b:a", "128k",
-        "-shortest", output,
-    ])
+    run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat, "-i", audio, "-vf", "fps=30,format=yuv420p,setsar=1", "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-c:a", "aac", "-b:a", "128k", "-shortest", output])
     return output
 
 
 def main():
     TRANSIT_OUT.mkdir(parents=True, exist_ok=True)
-    if not QUEUE.exists():
-        raise SystemExit("transit_publish_queue.json missing")
-    queue = json.loads(QUEUE.read_text(encoding="utf-8"))
-    events = queue.get("events", [])
-    for path in TRANSIT_OUT.glob("transit_*.mp4"):
-        path.unlink()
+    if not QUEUE.exists(): raise SystemExit("transit_publish_queue.json missing")
+    queue = json.loads(QUEUE.read_text(encoding="utf-8")); events = queue.get("events", [])
+    for path in TRANSIT_OUT.glob("transit_*.mp4"): path.unlink()
     manifest = []
     for event in events:
-        output = build_video(event)
-        manifest.append({**event, "video_path": str(output)})
-        print(f"TRANSIT VIDEO BUILT: {output}")
-    (OUT / "transit_video_manifest.json").write_text(json.dumps({"events": manifest}, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"TRANSIT VIDEO BUILD: PASS — {len(manifest)} video(s)")
+        output = build_video(event); manifest.append({**event, "video_path": str(output)}); print(f"TRANSIT VIDEO BUILT: {output}")
+    (OUT / "transit_video_manifest.json").write_text(json.dumps({"window_days": 7, "events": manifest}, ensure_ascii=False, indent=2), encoding="utf-8")
+    if len(manifest) != len(events): raise SystemExit("Transit video count does not match detected events")
+    print(f"NEXT-7-DAY TRANSIT VIDEO BUILD: PASS — {len(manifest)} of {len(events)} detected event(s)")
 
 
-if __name__ == "__main__":
-    main()
+if __name__ == "__main__": main()
