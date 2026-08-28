@@ -41,7 +41,7 @@ jobs:
           pip install google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2
       - name: Compile production code
         run: |
-          python -m py_compile video_engine/render_sync.py video_engine/visual_profiles.py video_engine/premium_entry.py video_engine/premium_entry_v21_1.py astro_engine/main.py astro_engine/rules.py content_engine/diversity.py content_engine/script.py scripts/validate_content_diversity.py scripts/build_daily_youtube_videos.py scripts/publish_youtube_daily.py scripts/publish_facebook_daily.py
+          python -m py_compile video_engine/render_sync.py video_engine/visual_profiles.py video_engine/premium_entry.py video_engine/premium_entry_v21_1.py astro_engine/main.py astro_engine/rules.py content_engine/diversity.py content_engine/script.py scripts/validate_content_diversity.py scripts/build_daily_youtube_videos.py scripts/build_transit_videos.py scripts/publish_youtube_daily.py scripts/publish_facebook_daily.py
       - name: Generate daily content
         env:
           TARGET_DATE_IST: ${{ github.event.inputs.target_date_ist || '' }}
@@ -70,18 +70,38 @@ jobs:
             [ "$attempt" = 2 ] && exit 1
             sleep 30
           done
+      - name: Detect next 7-day planetary transitions
+        run: python scripts/detect_transits.py
+      - name: Build next 7-day transition videos
+        run: python scripts/build_transit_videos.py
+      - name: Validate transition outputs
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json, subprocess
+          q=json.loads(Path('output/transit_publish_queue.json').read_text(encoding='utf-8'))
+          m=json.loads(Path('output/transit_video_manifest.json').read_text(encoding='utf-8'))
+          events=q.get('events', []); videos=m.get('events', [])
+          if len(events) != len(videos): raise SystemExit(f'Transit mismatch: detected={len(events)} videos={len(videos)}')
+          for item in videos:
+              p=Path(item['video_path'])
+              if not p.is_file() or p.stat().st_size == 0: raise SystemExit(f'Missing transit video: {p}')
+              subprocess.run(['ffmpeg','-v','error','-xerror','-i',str(p),'-map','0:v:0','-f','null','-'],check=True)
+          if len(events) > 13: raise SystemExit(f'Too many transition videos for 26-video publication cap: {len(events)}')
+          print(f'Transit validation: PASS ({len(events)} event(s), {len(videos)} video(s))')
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: astropratidin-publication-bundle
           path: output
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 1
 
   youtube_publish:
     name: Publish to YouTube
     needs: production
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
         with:
@@ -98,10 +118,10 @@ jobs:
         with:
           name: astropratidin-publication-bundle
           path: output
-      - name: Publish within conservative daily cap
+      - name: Publish up to 26 videos
         env:
           YOUTUBE_TOKEN_JSON: ${{ secrets.ASTROPRATIDIN_YOUTUBE_TOKEN_JSON }}
-          YOUTUBE_MAX_DAILY_UPLOADS: '1'
+          YOUTUBE_MAX_DAILY_UPLOADS: '26'
         run: python scripts/publish_youtube_daily.py
       - name: Verify YouTube publication manifest
         run: |
@@ -109,16 +129,17 @@ jobs:
           from pathlib import Path
           import json
           data=json.loads(Path('output/youtube_publish_manifest.json').read_text(encoding='utf-8'))
-          count=len(data.get('videos',[])); expected=int(data.get('daily_cap',1))
-          if count < 1 or count > expected: raise SystemExit(f'Unexpected YouTube publish count: {count}, cap={expected}')
-          print(f'YouTube publication: PASS ({count} video(s), cap={expected})')
+          count=len(data.get('videos',[])); expected=int(data.get('daily_cap',26)); planned=int(data.get('planned_total',0))
+          if count < 13 or count > 26: raise SystemExit(f'Unexpected YouTube publish count: {count}; expected 13-26')
+          if count != min(planned,26): raise SystemExit(f'YouTube publication incomplete: published={count}, planned={planned}')
+          print(f'YouTube publication: PASS ({count}/{planned}, cap=26)')
           PY
 
   facebook_publish:
     name: Publish to Facebook
     needs: production
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
         with:
@@ -128,12 +149,12 @@ jobs:
         with:
           name: astropratidin-publication-bundle
           path: output
-      - name: Publish within conservative daily cap
+      - name: Publish up to 26 videos
         env:
           FB_PAGE_ID: ${{ secrets.META_PAGE_ID || secrets.FB_PAGE_ID }}
           FB_PAGE_ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN || secrets.META_PAGE_ACCESS_TOKEN || secrets.FB_PAGE_ACCESS_TOKEN }}
           FB_API_VERSION: v25.0
-          FACEBOOK_MAX_DAILY_UPLOADS: '1'
+          FACEBOOK_MAX_DAILY_UPLOADS: '26'
         run: python scripts/publish_facebook_daily.py
       - name: Verify Facebook publication manifest
         run: |
@@ -141,9 +162,10 @@ jobs:
           from pathlib import Path
           import json
           data=json.loads(Path('output/facebook_publish_manifest.json').read_text(encoding='utf-8'))
-          count=len(data.get('videos',[])); expected=int(data.get('daily_cap',1))
-          if count < 1 or count > expected: raise SystemExit(f'Unexpected Facebook publish count: {count}, cap={expected}')
-          print(f'Facebook publication: PASS ({count} video(s), cap={expected})')
+          count=len(data.get('videos',[])); planned=int(data.get('planned_total',0))
+          if count < 13 or count > 26: raise SystemExit(f'Unexpected Facebook publish count: {count}; expected 13-26')
+          if count != min(planned,26): raise SystemExit(f'Facebook publication incomplete: published={count}, planned={planned}')
+          print(f'Facebook publication: PASS ({count}/{planned}, cap=26)')
           PY
 
   publication_summary:
