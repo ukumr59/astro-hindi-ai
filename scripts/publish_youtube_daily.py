@@ -55,12 +55,27 @@ def publication_date():
     return path.read_text(encoding="utf-8").strip()
 
 
+def load_youtube_credentials(raw):
+    """Accept either Google OAuth authorized-user JSON or credentials.json-style {installed:{...}}."""
+    try:
+        data=json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"ASTROPRATIDIN_YOUTUBE_TOKEN_JSON is not valid JSON: {exc}") from exc
+    if isinstance(data,dict) and isinstance(data.get("installed"),dict):
+        data=data["installed"]
+    required=("client_id","client_secret","refresh_token")
+    missing=[key for key in required if not data.get(key)]
+    if missing:
+        raise SystemExit("ASTROPRATIDIN_YOUTUBE_TOKEN_JSON missing required fields: " + ", ".join(missing))
+    return Credentials.from_authorized_user_info(data,scopes=["https://www.googleapis.com/auth/youtube.upload"])
+
+
 def main():
     raw=os.environ.get("YOUTUBE_TOKEN_JSON","")
     if not raw: raise SystemExit("Missing ASTROPRATIDIN_YOUTUBE_TOKEN_JSON repository secret")
     try: max_uploads=max(1,int(os.environ.get("YOUTUBE_MAX_DAILY_UPLOADS","1")))
     except ValueError: raise SystemExit("YOUTUBE_MAX_DAILY_UPLOADS must be a positive integer")
-    creds=Credentials.from_authorized_user_info(json.loads(raw),scopes=["https://www.googleapis.com/auth/youtube.upload"])
+    creds=load_youtube_credentials(raw)
     youtube=build("youtube","v3",credentials=creds)
     target_date=publication_date(); script=(OUT/"daily_script.md").read_text(encoding="utf-8")
     jobs=[]; combined=OUT/"daily_video.mp4"
