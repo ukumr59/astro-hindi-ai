@@ -88,36 +88,45 @@ jobs:
               subprocess.run(['ffmpeg','-v','error','-xerror','-i',str(p),'-map','0:v:0','-f','null','-'],check=True)
           print(f'NEXT-7-DAY TRANSIT GATE: PASS — {len(events)} transition(s) detected and {len(built)} valid video(s) built')
           PY
-      - name: 13-video publication media gate
+      - name: 26-video publication media gate
         run: |
           python - <<'PY'
           from pathlib import Path
           import subprocess
           main = Path('output/daily_video.mp4')
           rashis = sorted(Path('output/youtube_uploads').glob('*.mp4'))
-          files = [main] + rashis
+          transits = []
+          manifest = Path('output/transit_video_manifest.json')
+          if manifest.exists():
+              import json
+              for event in json.loads(manifest.read_text(encoding='utf-8')).get('events',[]):
+                  p=Path(event['video_path'])
+                  if p.exists(): transits.append(p)
+          files = [main] + rashis + transits
           if len(rashis) != 12:
               raise SystemExit(f'Expected exactly 12 individual Rashi videos, found {len(rashis)}')
-          if len(files) != 13:
-              raise SystemExit(f'Expected exactly 13 publication videos, found {len(files)}')
+          if len(files) > 26:
+              files = files[:26]
+          if len(files) < 13:
+              raise SystemExit(f'Expected at least 13 publication videos, found {len(files)}')
           for p in files:
               if not p.is_file() or p.stat().st_size < 10240:
                   raise SystemExit(f'Invalid publication file: {p}')
               subprocess.run(['ffmpeg','-v','error','-xerror','-i',str(p),'-map','0:v:0','-f','null','-'],check=True)
-          print('PRODUCTION MEDIA GATE: PASS — 1 major daily video + 12 individual Rashi videos')
+          print(f'PRODUCTION MEDIA GATE: PASS — {len(files)} video(s) available for publication (1 major + 12 Rashi + {max(0,len(files)-13)} transit)')
           PY
       - name: Publish to YouTube
         continue-on-error: true
         env:
           YOUTUBE_TOKEN_JSON: ${{ secrets.ASTROPRATIDIN_YOUTUBE_TOKEN_JSON }}
-          YOUTUBE_MAX_DAILY_UPLOADS: '1'
+          YOUTUBE_MAX_DAILY_UPLOADS: '26'
         run: python scripts/publish_youtube_daily.py
       - name: Publish to Facebook
         env:
           FB_PAGE_ID: ${{ secrets.META_PAGE_ID || secrets.FB_PAGE_ID }}
           FB_PAGE_ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN || secrets.META_PAGE_ACCESS_TOKEN || secrets.FB_PAGE_ACCESS_TOKEN }}
           FB_API_VERSION: v25.0
-          FACEBOOK_MAX_DAILY_UPLOADS: '1'
+          FACEBOOK_MAX_DAILY_UPLOADS: '26'
         run: python scripts/publish_facebook_daily.py
       - name: Verify Facebook publication manifest
         run: |
@@ -128,12 +137,13 @@ jobs:
           if not p.exists(): raise SystemExit('Missing facebook_publish_manifest.json')
           data=json.loads(p.read_text(encoding='utf-8'))
           n=len(data.get('videos',[]))
-          required=max(1,int(os.environ.get('FACEBOOK_MAX_DAILY_UPLOADS','1')))
-          if n<required: raise SystemExit(f'facebook_publish_manifest.json: only {n} videos, expected at least {required}')
-          print(f'facebook_publish_manifest.json: PASS ({n} videos)')
+          cap=min(26,max(1,int(os.environ.get('FACEBOOK_MAX_DAILY_UPLOADS','26'))))
+          if n>cap: raise SystemExit(f'facebook_publish_manifest.json: {n} videos exceeds daily cap {cap}')
+          if n<13: raise SystemExit(f'facebook_publish_manifest.json: only {n} videos, expected at least 13')
+          print(f'facebook_publish_manifest.json: PASS ({n} videos, cap={cap})')
           PY
         env:
-          FACEBOOK_MAX_DAILY_UPLOADS: '1'
+          FACEBOOK_MAX_DAILY_UPLOADS: '26'
       - name: Report YouTube result
         if: always()
         run: |
@@ -141,10 +151,14 @@ jobs:
           from pathlib import Path
           import json
           p=Path('output/youtube_publish_manifest.json')
-          if p.exists(): print(f"YOUTUBE: PASS ({len(json.loads(p.read_text()).get('videos',[]))} published)")
+          if p.exists():
+              data=json.loads(p.read_text())
+              n=len(data.get('videos',[])); cap=int(data.get('daily_cap',26))
+              if n>26: raise SystemExit(f'YOUTUBE: {n} published exceeds hard cap 26')
+              print(f'YOUTUBE: PASS ({n} published, cap={cap})')
           else: print('YOUTUBE: unavailable or failed; Facebook publication remains authoritative')
           PY
       - name: Production summary
         if: always()
         run: |
-          echo "Production summary: required output is 1 major daily video + 12 individual Rashi videos, plus a validated check and video build for every major planetary transition occurring in the next 7 days. GitHub artifact upload is disabled to avoid storage-quota failures."
+          echo "Production summary: publish up to 26 videos per platform — 1 major daily video + 12 individual Rashi videos + all detected major planetary transition videos, with the same publication queue available to YouTube and Facebook. GitHub artifact upload is disabled to avoid storage-quota failures."
