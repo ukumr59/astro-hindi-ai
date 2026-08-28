@@ -7,6 +7,11 @@ on:
         required: false
         type: string
         default: ''
+      publish_facebook:
+        description: Publish videos to Facebook during this manual run
+        required: false
+        type: boolean
+        default: false
   schedule:
     - cron: '30 17 * * *'
 concurrency:
@@ -122,6 +127,7 @@ jobs:
           YOUTUBE_MAX_DAILY_UPLOADS: '26'
         run: python scripts/publish_youtube_daily.py
       - name: Publish to Facebook
+        if: github.event_name == 'schedule' || github.event.inputs.publish_facebook == 'true'
         env:
           FB_PAGE_ID: ${{ secrets.META_PAGE_ID || secrets.FB_PAGE_ID }}
           FB_PAGE_ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN || secrets.META_PAGE_ACCESS_TOKEN || secrets.FB_PAGE_ACCESS_TOKEN }}
@@ -129,6 +135,7 @@ jobs:
           FACEBOOK_MAX_DAILY_UPLOADS: '26'
         run: python scripts/publish_facebook_daily.py
       - name: Verify Facebook publication manifest
+        if: github.event_name == 'schedule' || github.event.inputs.publish_facebook == 'true'
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -161,4 +168,4 @@ jobs:
       - name: Production summary
         if: always()
         run: |
-          echo "Production summary: publish up to 26 videos per platform — 1 major daily video + 12 individual Rashi videos + all detected major planetary transition videos, with the same publication queue available to YouTube and Facebook. GitHub artifact upload is disabled to avoid storage-quota failures."
+          echo "Production summary: publish up to 26 videos per platform — 1 major daily video + 12 individual Rashi videos + all detected major planetary transition videos. Manual runs default to YouTube only; Facebook is published only when the manual 'publish_facebook' option is enabled or on the normal scheduled run."
