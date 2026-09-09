@@ -87,7 +87,7 @@ jobs:
               p=Path(item['video_path'])
               if not p.is_file() or p.stat().st_size == 0: raise SystemExit(f'Missing transit video: {p}')
               subprocess.run(['ffmpeg','-v','error','-xerror','-i',str(p),'-map','0:v:0','-f','null','-'],check=True)
-          if len(events) > 13: raise SystemExit(f'Too many transition videos for 26-video publication cap: {len(events)}')
+          if len(events) > 13: raise SystemExit(f'Too many transition videos for publication queue: {len(events)}')
           print(f'Transit validation: PASS ({len(events)} event(s), {len(videos)} video(s))')
           PY
       - uses: actions/upload-artifact@v4
@@ -118,10 +118,12 @@ jobs:
         with:
           name: astropratidin-publication-bundle
           path: output
-      - name: Publish up to 26 videos
+      - name: Publish 13 core daily videos
         env:
           YOUTUBE_TOKEN_JSON: ${{ secrets.ASTROPRATIDIN_YOUTUBE_TOKEN_JSON }}
-          YOUTUBE_MAX_DAILY_UPLOADS: '26'
+          # One combined daily analysis + twelve materially differentiated Rashi videos.
+          # Transit videos remain generated and QA'd, but are not bulk-published to YouTube.
+          YOUTUBE_MAX_DAILY_UPLOADS: '13'
         run: python scripts/publish_youtube_daily.py
       - name: Verify YouTube publication manifest
         run: |
@@ -129,10 +131,10 @@ jobs:
           from pathlib import Path
           import json
           data=json.loads(Path('output/youtube_publish_manifest.json').read_text(encoding='utf-8'))
-          count=len(data.get('videos',[])); expected=int(data.get('daily_cap',26)); planned=int(data.get('planned_total',0))
-          if count < 13 or count > 26: raise SystemExit(f'Unexpected YouTube publish count: {count}; expected 13-26')
-          if count != min(planned,26): raise SystemExit(f'YouTube publication incomplete: published={count}, planned={planned}')
-          print(f'YouTube publication: PASS ({count}/{planned}, cap=26)')
+          count=len(data.get('videos',[])); expected=int(data.get('daily_cap',13)); planned=int(data.get('planned_total',0))
+          if count != 13: raise SystemExit(f'Unexpected YouTube publish count: {count}; expected exactly 13 core daily videos')
+          if count != min(planned,13): raise SystemExit(f'YouTube publication incomplete: published={count}, planned={planned}')
+          print(f'YouTube publication: PASS ({count}/{planned}, cap=13)')
           PY
 
   facebook_publish:
