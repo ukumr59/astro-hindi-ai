@@ -14,7 +14,6 @@ OUT = Path("output")
 UPLOADS = OUT / "youtube_uploads"
 RASHIS = [(1,"मेष","मेष राशि"),(2,"वृषभ","वृषभ राशि"),(3,"मिथुन","मिथुन राशि"),(4,"कर्क","कर्क राशि"),(5,"सिंह","सिंह राशि"),(6,"कन्या","कन्या राशि"),(7,"तुला","तुला राशि"),(8,"वृश्चिक","वृश्चिक राशि"),(9,"धनु","धनु राशि"),(10,"मकर","मकर राशि"),(11,"कुंभ","कुंभ राशि"),(12,"मीन","मीन राशि")]
 
-
 def upload_once(youtube, path, title, description, tags):
     body={"snippet":{"title":title[:100],"description":description[:4900],"categoryId":"22","tags":tags},"status":{"privacyStatus":"public","selfDeclaredMadeForKids":False}}
     media=MediaFileUpload(str(path),mimetype="video/mp4",chunksize=8*1024*1024,resumable=True)
@@ -27,7 +26,6 @@ def upload_once(youtube, path, title, description, tags):
     if not video_id: raise RuntimeError(f"YouTube upload returned no video ID for {path.name}")
     if response.get("status",{}).get("privacyStatus")!="public": raise RuntimeError(f"YouTube upload {video_id} was not public")
     return video_id
-
 
 def upload(youtube,path,title,description,tags,attempts=3):
     for attempt in range(1,attempts+1):
@@ -48,32 +46,25 @@ def upload(youtube,path,title,description,tags,attempts=3):
             if attempt==attempts: raise
             time.sleep(20*attempt)
 
-
 def publication_date():
     path=OUT/"publication_date.txt"
     if not path.exists(): raise SystemExit("publication_date.txt missing")
     return path.read_text(encoding="utf-8").strip()
 
-
 def load_youtube_credentials(raw):
     """Accept either Google OAuth authorized-user JSON or credentials.json-style {installed:{...}}."""
-    try:
-        data=json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise SystemExit(f"ASTROPRATIDIN_YOUTUBE_TOKEN_JSON is not valid JSON: {exc}") from exc
-    if isinstance(data,dict) and isinstance(data.get("installed"),dict):
-        data=data["installed"]
+    try: data=json.loads(raw)
+    except json.JSONDecodeError as exc: raise SystemExit(f"ASTROPRATIDIN_YOUTUBE_TOKEN_JSON is not valid JSON: {exc}") from exc
+    if isinstance(data,dict) and isinstance(data.get("installed"),dict): data=data["installed"]
     required=("client_id","client_secret","refresh_token")
     missing=[key for key in required if not data.get(key)]
-    if missing:
-        raise SystemExit("ASTROPRATIDIN_YOUTUBE_TOKEN_JSON missing required fields: " + ", ".join(missing))
+    if missing: raise SystemExit("ASTROPRATIDIN_YOUTUBE_TOKEN_JSON missing required fields: " + ", ".join(missing))
     return Credentials.from_authorized_user_info(data,scopes=["https://www.googleapis.com/auth/youtube.upload"])
-
 
 def main():
     raw=os.environ.get("YOUTUBE_TOKEN_JSON","")
     if not raw: raise SystemExit("Missing ASTROPRATIDIN_YOUTUBE_TOKEN_JSON repository secret")
-    try: max_uploads=max(1,int(os.environ.get("YOUTUBE_MAX_DAILY_UPLOADS","1")))
+    try: max_uploads=max(1,int(os.environ.get("YOUTUBE_MAX_DAILY_UPLOADS","26")))
     except ValueError: raise SystemExit("YOUTUBE_MAX_DAILY_UPLOADS must be a positive integer")
     creds=load_youtube_credentials(raw)
     youtube=build("youtube","v3",credentials=creds)
