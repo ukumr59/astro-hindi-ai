@@ -9,8 +9,9 @@ on:
         type: string
         default: ""
   schedule:
-    # 17:30 UTC = 23:00 IST
-    - cron: '30 17 * * *'
+    # GitHub Actions cron is UTC. 05:00 UTC = 10:30 IST; 11:30 UTC = 17:00 IST.
+    # Start production at 11:30 UTC so the workflow targets the requested 17:00 IST publication time.
+    - cron: '30 11 * * *'
 
 concurrency:
   group: astropratidin-daily-production
@@ -130,7 +131,7 @@ jobs:
           from pathlib import Path
           import json
           data=json.loads(Path('output/youtube_publish_manifest.json').read_text(encoding='utf-8'))
-          count=len(data.get('videos',[])); expected=int(data.get('daily_cap',26)); planned=int(data.get('planned_total',0))
+          count=len(data.get('videos',[])); planned=int(data.get('planned_total',0))
           if count < 13 or count > 26: raise SystemExit(f'Unexpected YouTube publish count: {count}; expected 13-26')
           if count != min(planned,26): raise SystemExit(f'YouTube publication incomplete: published={count}, planned={planned}')
           print(f'YouTube publication: PASS ({count}/{planned}, cap=26)')
