@@ -9,9 +9,10 @@ on:
         type: string
         default: ""
   schedule:
-    # GitHub Actions cron is UTC. 05:00 UTC = 10:30 IST; 11:30 UTC = 17:00 IST.
-    # Start production at 11:30 UTC so the workflow targets the requested 17:00 IST publication time.
-    - cron: '30 11 * * *'
+    # GitHub Actions cron is UTC. 11:00 UTC = 16:30 IST.
+    # The channel heatmap shows the strongest evening activity from about 18:30 IST onward.
+    # Start production at 16:30 IST to provide a 2-hour lead before that peak.
+    - cron: '00 11 * * *'
 
 concurrency:
   group: astropratidin-daily-production
