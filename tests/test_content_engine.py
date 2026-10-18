@@ -46,7 +46,8 @@ def test_diversity_profiles():
     ]
     manifest = profile_manifest(d1)
     assert "visual_style" in manifest
-    assert "motion_profile" in manifest
+    assert "publication_date" in manifest
+    assert "rotation_version" in manifest
 
 
 def test_build_daily_script_structure():
