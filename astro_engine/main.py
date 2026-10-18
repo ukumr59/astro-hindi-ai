@@ -10,6 +10,7 @@ from .future_transits import find_major_transits
 from .rules import SIGN_HI, PLANET_HI
 from content_engine.script import build_daily_script
 from content_engine.diversity import profile_manifest
+from agents.orchestrator import MultiAgentCoordinator
 
 OUT = Path("output")
 OUT.mkdir(exist_ok=True)
@@ -62,8 +63,8 @@ def run():
     profile = profile_manifest(target_date)
     (OUT / "content_profile.json").write_text(json.dumps(profile, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    script = build_daily_script(target_noon, current_positions, events)
-    (OUT / "daily_script.md").write_text(script, encoding="utf-8")
+    coordinator = MultiAgentCoordinator()
+    draft = coordinator.run_pipeline(target_date.isoformat(), target_noon, current_positions, events)
 
     # Scan the full upcoming seven-day window and queue every major sign-entry
     # event for video generation. The transit renderer may legitimately build

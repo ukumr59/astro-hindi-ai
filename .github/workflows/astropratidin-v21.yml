@@ -44,7 +44,7 @@ jobs:
           pip install google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2
       - name: Compile
         run: |
-          python -m py_compile video_engine/tts_engine.py video_engine/render_sync.py video_engine/premium_entry_v21_1.py astro_engine/main.py scripts/build_daily_youtube_videos.py scripts/publish_youtube_daily.py scripts/publish_facebook_daily.py scripts/build_transit_videos.py
+          python -m py_compile agents/__init__.py agents/models.py agents/strategist.py agents/creator.py agents/reviewer.py agents/notifier.py agents/orchestrator.py video_engine/tts_engine.py video_engine/render_sync.py video_engine/premium_entry_v21_1.py astro_engine/main.py scripts/build_daily_youtube_videos.py scripts/publish_youtube_daily.py scripts/publish_facebook_daily.py scripts/build_transit_videos.py
       - name: Run unit test suite
         run: pytest tests/ -v
       - name: Generate daily content and next-7-day transit schedule
