@@ -1,5 +1,10 @@
-"""Build branded videos for every major planetary transit detected in the next 7 days."""
+import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 import asyncio
 import json
 import re
@@ -7,8 +12,8 @@ import subprocess
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-import edge_tts
 from PIL import Image, ImageDraw, ImageFont
+from video_engine.tts_engine import speak_with_retry
 
 OUT = Path("output")
 QUEUE = OUT / "transit_publish_queue.json"
@@ -124,8 +129,6 @@ def narration(event):
     occurrence = datetime.fromisoformat(event["occurrence_ist"]).astimezone(IST)
     return (f"नमस्कार। AstroPratidin पर यह है प्रमुख ग्रह गोचर का विशेष अलर्ट। {event['planet_hi']} का {event['from_sign']} से {event['to_sign']} राशि में प्रवेश होने वाला है। यह महत्वपूर्ण राशि परिवर्तन {occurrence.strftime('%d %B %Y')} को लगभग {occurrence.strftime('%H:%M IST')} पर होगा। यह गोचर आने वाले सात दिनों में हो रहा है। इसका व्यक्तिगत प्रभाव चंद्र राशि, लग्न और जन्म कुंडली के अनुसार अलग-अलग हो सकता है। AstroPratidin पर आगामी दिनों में इस गोचर से जुड़े राशिवार संकेत और दैनिक अपडेट देखते रहें। वीडियो उपयोगी लगे तो फॉलो, सब्सक्राइब और शेयर करें। नमस्कार।")
 
-
-from video_engine.tts_engine import speak_with_retry
 
 async def speak(text, path):
     await speak_with_retry(text, path, voice=VOICE, rate="+5%", volume="+0%")
