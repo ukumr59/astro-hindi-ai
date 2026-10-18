@@ -23,7 +23,10 @@ def media_duration(ffmpeg,path):
     if not m: raise RuntimeError(f"Cannot read media duration: {path}")
     return int(m[1])*3600+int(m[2])*60+float(m[3])
 
-async def speak(text,path): await edge_tts.Communicate(text,VOICE_NAME,rate="+5%",volume="+0%").save(str(path))
+from video_engine.tts_engine import speak_with_retry
+
+async def speak(text, path):
+    await speak_with_retry(text, path, voice=VOICE_NAME, rate="+5%", volume="+0%")
 def clean(text): return " ".join(x.strip() for x in text.splitlines() if x.strip())
 def load_script():
     if not SCRIPT.exists(): raise RuntimeError("output/daily_script.md was not generated")

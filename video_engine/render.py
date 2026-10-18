@@ -678,17 +678,10 @@ def prepare_deities():
 # VOICE
 # ============================================================
 
-async def make_voice(text):
-    communicate = edge_tts.Communicate(
-        text,
-        VOICE_NAME,
-        rate="+5%",
-        volume="+0%",
-    )
+from video_engine.tts_engine import speak_with_retry
 
-    await communicate.save(
-        str(VOICE)
-    )
+async def make_voice(text):
+    await speak_with_retry(text, VOICE, voice=VOICE_NAME, rate="+5%", volume="+0%")
 
 
 def audio_duration(ffmpeg):

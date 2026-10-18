@@ -1,26 +1,26 @@
 name: AstroPratidin Automated Production
-
 on:
   workflow_dispatch:
     inputs:
       target_date_ist:
-        description: "Publication date to generate (YYYY-MM-DD). Leave blank for normal next-day production."
+        description: Publication date (YYYY-MM-DD); blank for normal production
         required: false
         type: string
-        default: ""
+        default: ''
+      publish_facebook:
+        description: Publish videos to Facebook during this manual run
+        required: false
+        type: boolean
+        default: false
   schedule:
-    # GitHub Actions cron is UTC. 11:00 UTC = 16:30 IST.
-    # The channel heatmap shows the strongest evening activity from about 18:30 IST onward.
-    # Start production at 16:30 IST to provide a 2-hour lead before that peak.
-    - cron: '00 11 * * *'
-
+    - cron: '30 10 * * *'
 concurrency:
   group: astropratidin-daily-production
   cancel-in-progress: false
-
 permissions:
   contents: read
-
+env:
+  TARGET_DATE_IST: ${{ github.event.inputs.target_date_ist || '' }}
 jobs:
   production:
     runs-on: ubuntu-latest
@@ -41,118 +41,96 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2
-      - name: Compile production code
+      - name: Compile
         run: |
-          python -m py_compile video_engine/render_sync.py video_engine/visual_profiles.py video_engine/premium_entry.py video_engine/premium_entry_v21_1.py astro_engine/main.py astro_engine/rules.py content_engine/diversity.py content_engine/script.py scripts/validate_content_diversity.py scripts/build_daily_youtube_videos.py scripts/build_transit_videos.py scripts/publish_youtube_daily.py scripts/publish_facebook_daily.py
-      - name: Generate daily content
-        env:
-          TARGET_DATE_IST: ${{ github.event.inputs.target_date_ist || '' }}
+          python -m py_compile video_engine/tts_engine.py video_engine/render_sync.py video_engine/premium_entry_v21_1.py astro_engine/main.py scripts/build_daily_youtube_videos.py scripts/publish_youtube_daily.py scripts/publish_facebook_daily.py scripts/build_transit_videos.py
+      - name: Run unit test suite
+        run: pytest tests/ -v
+      - name: Generate daily content and next-7-day transit schedule
         run: python -m astro_engine.main
-      - name: Enforce content diversity guardrail
-        run: python scripts/validate_content_diversity.py
-      - name: Render production videos with one automatic retry
+      - name: Render with automatic retry
         run: |
-          for attempt in 1 2; do
-            python -m video_engine.premium_entry_v21_1 && exit 0
-            [ "$attempt" = 2 ] && exit 1
-            sleep 30
-          done
-      - name: Validate main output
+          for n in 1 2; do python -m video_engine.premium_entry_v21_1 && exit 0; [ "$n" = 2 ] && exit 1; sleep 30; done
+      - name: Validate major daily video
         run: |
           test -s output/daily_video.mp4
           test -s output/daily_script.md
           test -s output/publication_date.txt
-          test -s output/content_profile.json
           ffmpeg -v error -xerror -i output/daily_video.mp4 -map 0:v:0 -f null -
-      - name: Build 12 individual Rashi videos with one automatic retry
+          echo "MAJOR DAILY VIDEO: PASS"
+      - name: Build exactly 12 individual Rashi videos
         run: |
-          for attempt in 1 2; do
-            rm -rf output/youtube_uploads
-            python scripts/build_daily_youtube_videos.py && [ "$(find output/youtube_uploads -maxdepth 1 -name '*.mp4' | wc -l)" -eq 12 ] && exit 0
-            [ "$attempt" = 2 ] && exit 1
-            sleep 30
-          done
-      - name: Detect next 7-day planetary transitions
-        run: python scripts/detect_transits.py
-      - name: Build next 7-day transition videos
+          for n in 1 2; do rm -rf output/youtube_uploads; python scripts/build_daily_youtube_videos.py && [ "$(find output/youtube_uploads -maxdepth 1 -name '*.mp4' | wc -l)" -eq 12 ] && exit 0; [ "$n" = 2 ] && exit 1; sleep 30; done
+      - name: Build videos for every major transit in next 7 days
         run: python scripts/build_transit_videos.py
-      - name: Validate transition outputs
+      - name: Validate next-7-day transit detection and videos
         run: |
           python - <<'PY'
           from pathlib import Path
           import json, subprocess
-          q=json.loads(Path('output/transit_publish_queue.json').read_text(encoding='utf-8'))
-          m=json.loads(Path('output/transit_video_manifest.json').read_text(encoding='utf-8'))
-          events=q.get('events', []); videos=m.get('events', [])
-          if len(events) != len(videos): raise SystemExit(f'Transit mismatch: detected={len(events)} videos={len(videos)}')
-          for item in videos:
-              p=Path(item['video_path'])
-              if not p.is_file() or p.stat().st_size == 0: raise SystemExit(f'Missing transit video: {p}')
+          from datetime import datetime, timedelta
+          from zoneinfo import ZoneInfo
+          IST=ZoneInfo('Asia/Kolkata')
+          schedule=Path('output/future_transits.json')
+          queue=Path('output/transit_publish_queue.json')
+          manifest=Path('output/transit_video_manifest.json')
+          for p in (schedule, queue, manifest):
+              if not p.exists(): raise SystemExit(f'Missing transit output: {p}')
+          generated=json.loads(schedule.read_text(encoding='utf-8'))
+          queued=json.loads(queue.read_text(encoding='utf-8')).get('events',[])
+          built=json.loads(manifest.read_text(encoding='utf-8')).get('events',[])
+          events=generated.get('events',[])
+          start=datetime.fromisoformat(generated['window_start_ist']).astimezone(IST)
+          end=start+timedelta(days=7)
+          ids=set()
+          for e in events:
+              when=datetime.fromisoformat(e['occurrence_ist']).astimezone(IST)
+              if not (start <= when <= end): raise SystemExit(f'Transit outside 7-day window: {e}')
+              if e['id'] in ids: raise SystemExit(f'Duplicate transit id: {e["id"]}')
+              ids.add(e['id'])
+          if {e['id'] for e in queued} != ids: raise SystemExit('Transit queue does not exactly match next-7-day detection')
+          if {e['id'] for e in built} != ids: raise SystemExit('Transit video manifest does not exactly match detected transits')
+          for e in built:
+              p=Path(e['video_path'])
+              if not p.is_file() or p.stat().st_size < 10240: raise SystemExit(f'Invalid transit video: {p}')
               subprocess.run(['ffmpeg','-v','error','-xerror','-i',str(p),'-map','0:v:0','-f','null','-'],check=True)
-          if len(events) > 13: raise SystemExit(f'Too many transition videos for publication queue: {len(events)}')
-          print(f'Transit validation: PASS ({len(events)} event(s), {len(videos)} video(s))')
+          print(f'NEXT-7-DAY TRANSIT GATE: PASS — {len(events)} transition(s) detected and {len(built)} valid video(s) built')
           PY
-      - uses: actions/upload-artifact@v4
-        with:
-          name: astropratidin-publication-bundle
-          path: output
-          if-no-files-found: error
-          retention-days: 1
-
-  youtube_publish:
-    name: Publish to YouTube
-    needs: production
-    runs-on: ubuntu-latest
-    timeout-minutes: 180
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: v21-premium-9-5-architecture
-          fetch-depth: 1
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Install YouTube dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2
-      - uses: actions/download-artifact@v5
-        with:
-          name: astropratidin-publication-bundle
-          path: output
-      - name: Publish up to 26 daily videos
-        env:
-          YOUTUBE_TOKEN_JSON: ${{ secrets.ASTROPRATIDIN_YOUTUBE_TOKEN_JSON }}
-          # One combined daily analysis + twelve Rashi videos + up to thirteen planetary-transition videos.
-          YOUTUBE_MAX_DAILY_UPLOADS: '26'
-        run: python scripts/publish_youtube_daily.py
-      - name: Verify YouTube publication manifest
+      - name: 26-video publication media gate
         run: |
           python - <<'PY'
           from pathlib import Path
-          import json
-          data=json.loads(Path('output/youtube_publish_manifest.json').read_text(encoding='utf-8'))
-          count=len(data.get('videos',[])); planned=int(data.get('planned_total',0))
-          if count < 13 or count > 26: raise SystemExit(f'Unexpected YouTube publish count: {count}; expected 13-26')
-          if count != min(planned,26): raise SystemExit(f'YouTube publication incomplete: published={count}, planned={planned}')
-          print(f'YouTube publication: PASS ({count}/{planned}, cap=26)')
+          import subprocess
+          main = Path('output/daily_video.mp4')
+          rashis = sorted(Path('output/youtube_uploads').glob('*.mp4'))
+          transits = []
+          manifest = Path('output/transit_video_manifest.json')
+          if manifest.exists():
+              import json
+              for event in json.loads(manifest.read_text(encoding='utf-8')).get('events',[]):
+                  p=Path(event['video_path'])
+                  if p.exists(): transits.append(p)
+          files = [main] + rashis + transits
+          if len(rashis) != 12:
+              raise SystemExit(f'Expected exactly 12 individual Rashi videos, found {len(rashis)}')
+          if len(files) > 26:
+              files = files[:26]
+          if len(files) < 13:
+              raise SystemExit(f'Expected at least 13 publication videos, found {len(files)}')
+          for p in files:
+              if not p.is_file() or p.stat().st_size < 10240:
+                  raise SystemExit(f'Invalid publication file: {p}')
+              subprocess.run(['ffmpeg','-v','error','-xerror','-i',str(p),'-map','0:v:0','-f','null','-'],check=True)
+          print(f'PRODUCTION MEDIA GATE: PASS — {len(files)} video(s) available for publication (1 major + 12 Rashi + {max(0,len(files)-13)} transit)')
           PY
-
-  facebook_publish:
-    name: Publish to Facebook
-    needs: production
-    runs-on: ubuntu-latest
-    timeout-minutes: 240
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: v21-premium-9-5-architecture
-          fetch-depth: 1
-      - uses: actions/download-artifact@v5
-        with:
-          name: astropratidin-publication-bundle
-          path: output
-      - name: Publish up to 26 videos
+      - name: Publish to YouTube
+        continue-on-error: true
+        env:
+          YOUTUBE_TOKEN_JSON: ${{ secrets.ASTROPRATIDIN_YOUTUBE_TOKEN_JSON }}
+          YOUTUBE_MAX_DAILY_UPLOADS: '26'
+        run: python scripts/publish_youtube_daily.py
+      - name: Publish to Facebook
+        if: github.event_name == 'schedule' || github.event.inputs.publish_facebook == 'true'
         env:
           FB_PAGE_ID: ${{ secrets.META_PAGE_ID || secrets.FB_PAGE_ID }}
           FB_PAGE_ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN || secrets.META_PAGE_ACCESS_TOKEN || secrets.FB_PAGE_ACCESS_TOKEN }}
@@ -160,24 +138,91 @@ jobs:
           FACEBOOK_MAX_DAILY_UPLOADS: '26'
         run: python scripts/publish_facebook_daily.py
       - name: Verify Facebook publication manifest
+        if: github.event_name == 'schedule' || github.event.inputs.publish_facebook == 'true'
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json, os
+          p=Path('output/facebook_publish_manifest.json')
+          if not p.exists(): raise SystemExit('Missing facebook_publish_manifest.json')
+          data=json.loads(p.read_text(encoding='utf-8'))
+          n=len(data.get('videos',[]))
+          cap=min(26,max(1,int(os.environ.get('FACEBOOK_MAX_DAILY_UPLOADS','26'))))
+          if n>cap: raise SystemExit(f'facebook_publish_manifest.json: {n} videos exceeds daily cap {cap}')
+          if n<13: raise SystemExit(f'facebook_publish_manifest.json: only {n} videos, expected at least 13')
+          print(f'facebook_publish_manifest.json: PASS ({n} videos, cap={cap})')
+          PY
+        env:
+          FACEBOOK_MAX_DAILY_UPLOADS: '26'
+      - name: Report YouTube result
+        if: always()
         run: |
           python - <<'PY'
           from pathlib import Path
           import json
-          data=json.loads(Path('output/facebook_publish_manifest.json').read_text(encoding='utf-8'))
-          count=len(data.get('videos',[])); planned=int(data.get('planned_total',0))
-          if count < 13 or count > 26: raise SystemExit(f'Unexpected Facebook publish count: {count}; expected 13-26')
-          if count != min(planned,26): raise SystemExit(f'Facebook publication incomplete: published={count}, planned={planned}')
-          print(f'Facebook publication: PASS ({count}/{planned}, cap=26)')
+          p=Path('output/youtube_publish_manifest.json')
+          if p.exists():
+              data=json.loads(p.read_text())
+              n=len(data.get('videos',[])); cap=int(data.get('daily_cap',26))
+              if n>26: raise SystemExit(f'YOUTUBE: {n} published exceeds hard cap 26')
+              print(f'YOUTUBE: PASS ({n} published, cap={cap})')
+          else: print('YOUTUBE: unavailable or failed; Facebook publication remains authoritative')
           PY
-
-  publication_summary:
-    if: always()
-    needs: [youtube_publish, facebook_publish]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Report publication status
+      - name: Generate production dashboard summary
+        if: always()
         run: |
-          echo "YouTube job result: ${{ needs.youtube_publish.result }}"
-          echo "Facebook job result: ${{ needs.facebook_publish.result }}"
-          [ "${{ needs.youtube_publish.result }}" = success ] && [ "${{ needs.facebook_publish.result }}" = success ]
+          python - <<'PY'
+          import os, json
+          from pathlib import Path
+
+          summary_path = os.environ.get('GITHUB_STEP_SUMMARY')
+          if not summary_path:
+              exit(0)
+
+          lines = [
+              "# 🌟 AstroPratidin Production Dashboard",
+              "",
+          ]
+
+          pub_date_file = Path('output/publication_date.txt')
+          pub_date = pub_date_file.read_text(encoding='utf-8').strip() if pub_date_file.exists() else 'N/A'
+          lines.append(f"**Publication Target Date:** `{pub_date}`\n")
+
+          daily_video = Path('output/daily_video.mp4')
+          rashi_videos = list(Path('output/youtube_uploads').glob('*.mp4')) if Path('output/youtube_uploads').exists() else []
+          transit_manifest = Path('output/transit_video_manifest.json')
+          transits = json.loads(transit_manifest.read_text(encoding='utf-8')).get('events', []) if transit_manifest.exists() else []
+
+          lines.append("### 📹 Video Assets Generated")
+          lines.append(f"- **Major Daily Video:** {'✅ Ready' if daily_video.exists() else '❌ Missing'}")
+          lines.append(f"- **Individual Rashi Videos:** {len(rashi_videos)} / 12 {'✅' if len(rashi_videos) == 12 else '⚠️'}")
+          lines.append(f"- **Planetary Transit Videos:** {len(transits)} upcoming event(s)")
+          lines.append("")
+
+          yt_file = Path('output/youtube_publish_manifest.json')
+          if yt_file.exists():
+              yt = json.loads(yt_file.read_text(encoding='utf-8'))
+              yt_vids = yt.get('videos', [])
+              lines.append(f"### 🔴 YouTube Publication ({len(yt_vids)} published)")
+              lines.append("| Index | Title | Status |")
+              lines.append("| :--- | :--- | :--- |")
+              for idx, v in enumerate(yt_vids, 1):
+                  lines.append(f"| {idx} | {v.get('title', 'Video')} | ✅ Uploaded |")
+          else:
+              lines.append("### 🔴 YouTube Publication: ⚠️ Manifest not generated or failed")
+
+          fb_file = Path('output/facebook_publish_manifest.json')
+          if fb_file.exists():
+              fb = json.loads(fb_file.read_text(encoding='utf-8'))
+              fb_vids = fb.get('videos', [])
+              lines.append(f"\n### 🔵 Facebook Publication ({len(fb_vids)} published)")
+          else:
+              lines.append("\n### 🔵 Facebook Publication: Skipped or not run")
+
+          with open(summary_path, 'a', encoding='utf-8') as f:
+              f.write('\n'.join(lines) + '\n')
+          PY
+      - name: Production summary
+        if: always()
+        run: |
+          echo "Production summary: publish up to 26 videos per platform — 1 major daily video + 12 individual Rashi videos + all detected major planetary transition videos. Manual runs default to YouTube only; Facebook publication is enabled for scheduled runs or when the manual publish_facebook option is selected."

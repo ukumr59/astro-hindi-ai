@@ -125,8 +125,10 @@ def narration(event):
     return (f"नमस्कार। AstroPratidin पर यह है प्रमुख ग्रह गोचर का विशेष अलर्ट। {event['planet_hi']} का {event['from_sign']} से {event['to_sign']} राशि में प्रवेश होने वाला है। यह महत्वपूर्ण राशि परिवर्तन {occurrence.strftime('%d %B %Y')} को लगभग {occurrence.strftime('%H:%M IST')} पर होगा। यह गोचर आने वाले सात दिनों में हो रहा है। इसका व्यक्तिगत प्रभाव चंद्र राशि, लग्न और जन्म कुंडली के अनुसार अलग-अलग हो सकता है। AstroPratidin पर आगामी दिनों में इस गोचर से जुड़े राशिवार संकेत और दैनिक अपडेट देखते रहें। वीडियो उपयोगी लगे तो फॉलो, सब्सक्राइब और शेयर करें। नमस्कार।")
 
 
+from video_engine.tts_engine import speak_with_retry
+
 async def speak(text, path):
-    await edge_tts.Communicate(text, VOICE, rate="+5%", volume="+0%").save(str(path))
+    await speak_with_retry(text, path, voice=VOICE, rate="+5%", volume="+0%")
 
 
 def build_video(event):
