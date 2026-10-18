@@ -42,7 +42,10 @@ jobs:
           pip install -r requirements.txt
           pip install google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2
       - name: Compile
-        run: python -m py_compile video_engine/premium_entry_v21_1.py astro_engine/main.py scripts/build_daily_youtube_videos.py scripts/publish_youtube_daily.py scripts/publish_facebook_daily.py scripts/build_transit_videos.py
+        run: |
+          python -m py_compile video_engine/tts_engine.py video_engine/render_sync.py video_engine/premium_entry_v21_1.py astro_engine/main.py scripts/build_daily_youtube_videos.py scripts/publish_youtube_daily.py scripts/publish_facebook_daily.py scripts/build_transit_videos.py
+      - name: Run unit test suite
+        run: pytest tests/ -v
       - name: Generate daily content and next-7-day transit schedule
         run: python -m astro_engine.main
       - name: Render with automatic retry
@@ -164,6 +167,60 @@ jobs:
               if n>26: raise SystemExit(f'YOUTUBE: {n} published exceeds hard cap 26')
               print(f'YOUTUBE: PASS ({n} published, cap={cap})')
           else: print('YOUTUBE: unavailable or failed; Facebook publication remains authoritative')
+          PY
+      - name: Generate production dashboard summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import os, json
+          from pathlib import Path
+
+          summary_path = os.environ.get('GITHUB_STEP_SUMMARY')
+          if not summary_path:
+              exit(0)
+
+          lines = [
+              "# 🌟 AstroPratidin Production Dashboard",
+              "",
+          ]
+
+          pub_date_file = Path('output/publication_date.txt')
+          pub_date = pub_date_file.read_text(encoding='utf-8').strip() if pub_date_file.exists() else 'N/A'
+          lines.append(f"**Publication Target Date:** `{pub_date}`\n")
+
+          daily_video = Path('output/daily_video.mp4')
+          rashi_videos = list(Path('output/youtube_uploads').glob('*.mp4')) if Path('output/youtube_uploads').exists() else []
+          transit_manifest = Path('output/transit_video_manifest.json')
+          transits = json.loads(transit_manifest.read_text(encoding='utf-8')).get('events', []) if transit_manifest.exists() else []
+
+          lines.append("### 📹 Video Assets Generated")
+          lines.append(f"- **Major Daily Video:** {'✅ Ready' if daily_video.exists() else '❌ Missing'}")
+          lines.append(f"- **Individual Rashi Videos:** {len(rashi_videos)} / 12 {'✅' if len(rashi_videos) == 12 else '⚠️'}")
+          lines.append(f"- **Planetary Transit Videos:** {len(transits)} upcoming event(s)")
+          lines.append("")
+
+          yt_file = Path('output/youtube_publish_manifest.json')
+          if yt_file.exists():
+              yt = json.loads(yt_file.read_text(encoding='utf-8'))
+              yt_vids = yt.get('videos', [])
+              lines.append(f"### 🔴 YouTube Publication ({len(yt_vids)} published)")
+              lines.append("| Index | Title | Status |")
+              lines.append("| :--- | :--- | :--- |")
+              for idx, v in enumerate(yt_vids, 1):
+                  lines.append(f"| {idx} | {v.get('title', 'Video')} | ✅ Uploaded |")
+          else:
+              lines.append("### 🔴 YouTube Publication: ⚠️ Manifest not generated or failed")
+
+          fb_file = Path('output/facebook_publish_manifest.json')
+          if fb_file.exists():
+              fb = json.loads(fb_file.read_text(encoding='utf-8'))
+              fb_vids = fb.get('videos', [])
+              lines.append(f"\n### 🔵 Facebook Publication ({len(fb_vids)} published)")
+          else:
+              lines.append("\n### 🔵 Facebook Publication: Skipped or not run")
+
+          with open(summary_path, 'a', encoding='utf-8') as f:
+              f.write('\n'.join(lines) + '\n')
           PY
       - name: Production summary
         if: always()
